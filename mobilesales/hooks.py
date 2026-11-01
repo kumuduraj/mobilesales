@@ -133,6 +133,15 @@ fixtures = [
 			]
 		],
 	},
+	{
+		"dt": "Workflow State",
+		"filters": [["name", "in", ["Draft", "Pending Store", "Pending Cashier", "Pending Approval", "Cancelled"]]],
+	},
+	{
+		"dt": "Workflow Action Master",
+		"filters": [["name", "in", ["Submit for Verification", "Verify Stock", "Verify Cash", "Cancel"]]],
+	},
+	{"dt": "Workflow", "filters": [["name", "in", ["Mobile Settlement Approval"]]]},
 ]
 
 # Uninstallation
