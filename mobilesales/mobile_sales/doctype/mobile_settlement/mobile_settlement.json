@@ -5,18 +5,446 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "mobile_trip",
   "agent",
+  "agent_name",
+  "agent_user",
+  "column_break_header",
+  "trip_date",
+  "route",
+  "van_warehouse",
+  "company",
+  "workflow_state",
+  "summary_section",
+  "total_visits",
+  "sales_visits",
+  "no_sale_visits",
+  "collection_only_visits",
+  "column_break_sales",
+  "invoice_count",
+  "invoiced_amount",
+  "cash_sales_amount",
+  "credit_sales_amount",
+  "column_break_collected",
+  "collected_current",
+  "collected_previous",
+  "total_collected",
+  "stock_section",
+  "stock_lines",
+  "stock_variance_value",
+  "batch_section",
+  "batch_lines",
+  "cash_section",
+  "opening_cash_float",
+  "expected_cash",
+  "cash_handed_over",
+  "cash_variance",
+  "column_break_cash",
+  "denominations",
+  "cheques_section",
+  "cheques_handed_over",
+  "approval_section",
+  "variance_action",
+  "needs_approval",
+  "remarks",
+  "column_break_approval",
+  "verified_by_store",
+  "verified_by_cashier",
+  "postings_section",
+  "return_entry",
+  "damage_entry",
+  "shortage_entry",
+  "column_break_postings",
+  "recovery_journal",
+  "cash_journal",
+  "variance_journal",
   "amended_from"
  ],
  "fields": [
+  {
+   "fieldname": "mobile_trip",
+   "fieldtype": "Link",
+   "label": "Mobile Trip",
+   "options": "Mobile Trip",
+   "reqd": 1,
+   "set_only_once": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
   {
    "fieldname": "agent",
    "fieldtype": "Link",
    "label": "Agent",
    "options": "Mobile Sales Agent",
-   "reqd": 1,
-   "in_list_view": 1,
+   "fetch_from": "mobile_trip.agent",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "agent_name",
+   "fieldtype": "Data",
+   "label": "Agent Name",
+   "fetch_from": "mobile_trip.agent_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "agent_user",
+   "fieldtype": "Link",
+   "label": "Agent User",
+   "options": "User",
+   "fetch_from": "mobile_trip.agent_user",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "trip_date",
+   "fieldtype": "Date",
+   "label": "Trip Date",
+   "fetch_from": "mobile_trip.trip_date",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "route",
+   "fieldtype": "Link",
+   "label": "Route",
+   "options": "Mobile Route",
+   "fetch_from": "mobile_trip.route",
+   "read_only": 1
+  },
+  {
+   "fieldname": "van_warehouse",
+   "fieldtype": "Link",
+   "label": "Van Warehouse",
+   "options": "Warehouse",
+   "fetch_from": "mobile_trip.van_warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "fetch_from": "mobile_trip.company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "workflow_state",
+   "fieldtype": "Link",
+   "label": "Workflow State",
+   "options": "Workflow State",
+   "read_only": 1,
+   "hidden": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Day Summary",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "total_visits",
+   "fieldtype": "Int",
+   "label": "Visits",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "sales_visits",
+   "fieldtype": "Int",
+   "label": "Sales Visits",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "no_sale_visits",
+   "fieldtype": "Int",
+   "label": "No Sale Visits",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "collection_only_visits",
+   "fieldtype": "Int",
+   "label": "Collection Only Visits",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_sales",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "invoice_count",
+   "fieldtype": "Int",
+   "label": "Invoices",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "invoiced_amount",
+   "fieldtype": "Currency",
+   "label": "Invoiced Amount",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "cash_sales_amount",
+   "fieldtype": "Currency",
+   "label": "Cash Sales",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "credit_sales_amount",
+   "fieldtype": "Currency",
+   "label": "Credit Sales",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "column_break_collected",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "collected_current",
+   "fieldtype": "Currency",
+   "label": "Collected (today's invoices)",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "collected_previous",
+   "fieldtype": "Currency",
+   "label": "Collected (previous invoices)",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "total_collected",
+   "fieldtype": "Currency",
+   "label": "Total Collected",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "stock_section",
+   "fieldtype": "Section Break",
+   "label": "Stock"
+  },
+  {
+   "fieldname": "stock_lines",
+   "fieldtype": "Table",
+   "label": "Stock Lines",
+   "options": "Mobile Settlement Item"
+  },
+  {
+   "fieldname": "stock_variance_value",
+   "fieldtype": "Currency",
+   "label": "Stock Variance Value",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "batch_section",
+   "fieldtype": "Section Break",
+   "label": "Batch Drill-down",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "batch_lines",
+   "fieldtype": "Table",
+   "label": "Batch Lines",
+   "options": "Mobile Settlement Batch",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "cash_section",
+   "fieldtype": "Section Break",
+   "label": "Cash"
+  },
+  {
+   "fieldname": "opening_cash_float",
+   "fieldtype": "Currency",
+   "label": "Opening Cash Float",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "expected_cash",
+   "fieldtype": "Currency",
+   "label": "Expected Cash",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency"
+  },
+  {
+   "fieldname": "cash_handed_over",
+   "fieldtype": "Currency",
+   "label": "Cash Handed Over",
+   "options": "Company:company:default_currency",
+   "description": "Equals the denomination total when any count is entered"
+  },
+  {
+   "fieldname": "cash_variance",
+   "fieldtype": "Currency",
+   "label": "Cash Variance",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Company:company:default_currency",
+   "description": "Handed over − expected (negative = short)"
+  },
+  {
+   "fieldname": "column_break_cash",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "denominations",
+   "fieldtype": "Table",
+   "label": "Denominations",
+   "options": "Mobile Cash Denomination"
+  },
+  {
+   "fieldname": "cheques_section",
+   "fieldtype": "Section Break",
+   "label": "Cheques",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "cheques_handed_over",
+   "fieldtype": "Table",
+   "label": "Cheques Handed Over",
+   "options": "Mobile Settlement Cheque",
+   "description": "Recorded only; agents use the cash mode of payment, no postings yet"
+  },
+  {
+   "fieldname": "approval_section",
+   "fieldtype": "Section Break",
+   "label": "Approval"
+  },
+  {
+   "fieldname": "variance_action",
+   "fieldtype": "Select",
+   "label": "Variance Action",
+   "read_only": 1,
+   "no_copy": 1,
+   "options": "Write Off\nRecover from Agent"
+  },
+  {
+   "fieldname": "needs_approval",
+   "fieldtype": "Check",
+   "label": "Needs Supervisor Approval",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "column_break_approval",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "verified_by_store",
+   "fieldtype": "Link",
+   "label": "Verified by Store",
+   "options": "User",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "verified_by_cashier",
+   "fieldtype": "Link",
+   "label": "Verified by Cashier",
+   "options": "User",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "postings_section",
+   "fieldtype": "Section Break",
+   "label": "Postings"
+  },
+  {
+   "fieldname": "return_entry",
+   "fieldtype": "Link",
+   "label": "Return Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "damage_entry",
+   "fieldtype": "Link",
+   "label": "Damage Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "shortage_entry",
+   "fieldtype": "Link",
+   "label": "Shortage Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "column_break_postings",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "recovery_journal",
+   "fieldtype": "Link",
+   "label": "Stock Recovery Journal",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "cash_journal",
+   "fieldtype": "Link",
+   "label": "Cash Hand-over Journal",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "variance_journal",
+   "fieldtype": "Link",
+   "label": "Cash Variance Journal",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "amended_from",
@@ -32,7 +460,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-01 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Settlement",
@@ -70,27 +498,33 @@
    "amend": 1
   },
   {
+   "role": "Mobile Sales Agent",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1
+  },
+  {
    "role": "Mobile Sales Store Keeper",
    "read": 1,
-   "report": 1,
-   "print": 1
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "report": 1
   },
   {
    "role": "Mobile Sales Cashier",
    "read": 1,
-   "report": 1,
-   "print": 1
-  },
-  {
-   "role": "Mobile Sales Agent",
-   "read": 1,
-   "report": 1,
-   "print": 1
+   "write": 1,
+   "submit": 1,
+   "print": 1,
+   "report": 1
   }
  ],
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "agent_name",
  "track_changes": 1
 }

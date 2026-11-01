@@ -13,6 +13,7 @@ ACCOUNT_FIELDS = (
 	"main_cash_account",
 	"stock_shortage_account",
 	"cash_shortage_account",
+	"employee_recovery_account",
 )
 EXPENSE_ACCOUNT_FIELDS = ("stock_shortage_account", "cash_shortage_account")
 BATCH_PICK_METHODS = ("FIFO", "Expiry")
@@ -164,6 +165,17 @@ class MobileSalesSettings(Document):
 				frappe.throw(
 					_("{0} {1} must be an Expense ledger (not group).").format(
 						_(self.meta.get_label(fieldname)), frappe.bold(value)
+					)
+				)
+
+		if self.employee_recovery_account:
+			is_group, account_type = frappe.db.get_value(
+				"Account", self.employee_recovery_account, ["is_group", "account_type"]
+			)
+			if is_group or account_type not in ("Receivable", "Payable"):
+				frappe.throw(
+					_("Employee Recovery Account {0} must be a Receivable or Payable ledger.").format(
+						frappe.bold(self.employee_recovery_account)
 					)
 				)
 

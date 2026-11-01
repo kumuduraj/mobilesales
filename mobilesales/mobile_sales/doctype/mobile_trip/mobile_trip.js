@@ -37,6 +37,20 @@ frappe.ui.form.on("Mobile Trip", {
 			frm.add_custom_button(__("Top-up Load"), () => show_top_up_dialog(frm));
 		}
 		frm.add_custom_button(__("Van Stock"), () => show_van_stock(frm));
+		const can_settle =
+			is_agent || is_supervisor || frappe.user.has_role("Mobile Sales Store Keeper");
+		if (frm.doc.status === "Settling" && can_settle) {
+			frm.add_custom_button(__("Create Settlement"), () =>
+				frappe.call({
+					method: "mobilesales.services.settlement.make_settlement",
+					args: { trip: frm.doc.name },
+					freeze: true,
+					callback(r) {
+						if (r.message) frappe.set_route("Form", "Mobile Settlement", r.message);
+					},
+				})
+			);
+		}
 	},
 
 	set_status_indicator(frm) {
