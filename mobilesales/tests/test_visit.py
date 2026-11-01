@@ -7,7 +7,12 @@ from frappe.utils import flt, now_datetime, nowdate
 from mobilesales.overrides import guards
 from mobilesales.services import customer_update, invoicing
 from mobilesales.services import trip as trip_service
-from mobilesales.setup.permissions import AGENT_PERMISSIONS, AGENT_READ_DOCTYPES, AGENT_ROLE
+from mobilesales.setup.permissions import (
+	AGENT_PERMISSIONS,
+	AGENT_READ_DOCTYPES,
+	AGENT_ROLE,
+	check_standard_permission_drift,
+)
 from mobilesales.tests.utils import PREFIX, MobileSalesTestCase
 
 RIGHTS = (
@@ -353,6 +358,24 @@ class TestCustomerVisit(MobileSalesTestCase):
 			self.assertEqual(len(agent_rules), 1, doctype)
 			granted = {r for r in RIGHTS[2:] if agent_rules[0].get(r)}
 			self.assertEqual(granted, set(AGENT_PERMISSIONS[doctype]), doctype)
+
+	def test_permission_drift_is_reported_not_fixed(self):
+		self.assertEqual(check_standard_permission_drift(), [])
+		title = "mobilesales: standard permissions changed for Customer, review Custom DocPerm"
+		# Error Log is MyISAM (survives rollback by design): remove what this test writes.
+		since = now_datetime()
+		self.addCleanup(
+			lambda: frappe.db.delete("Error Log", {"method": title, "creation": [">=", since]})
+		)
+
+		rule = frappe.get_all(
+			"Custom DocPerm", filters={"parent": "Customer", "role": ["!=", AGENT_ROLE]}, fields=["name", "role", "write"], limit=1
+		)[0]
+		frappe.db.set_value("Custom DocPerm", rule.name, "write", 0 if rule.write else 1)
+		self.assertEqual(check_standard_permission_drift(), ["Customer"])
+		log = frappe.get_last_doc("Error Log", filters={"method": title})
+		self.assertIn(rule.role, log.error)
+		self.assertEqual(frappe.db.get_value("Custom DocPerm", rule.name, "write"), 0 if rule.write else 1)
 
 	# 13
 	def test_standard_invoice_keeps_default_series(self):

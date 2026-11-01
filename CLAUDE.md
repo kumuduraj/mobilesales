@@ -13,6 +13,10 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 - Restart: never run sudo/supervisorctl. Ask Raj to run:
   sudo supervisorctl restart AgroPublic-web: AgroPublic-workers:
   (other benches share this server — never "restart all")
+- 13 DocTypes use Custom DocPerm copies (made by mobilesales/setup/permissions.py to give Mobile Sales Agent
+  access): Customer, Item, UOM, Price List, Item Price, Batch, Contact, Address, Territory, Customer Group,
+  Sales Invoice, Payment Entry, Account. After every ERPNext upgrade check migrate output / Error Log for
+  the mobilesales permission warning ("mobilesales: standard permissions changed for <DocType>").
 
 ## Non-negotiable rules
 1. NEVER modify apps/frappe, apps/erpnext or any other app. Before every commit:

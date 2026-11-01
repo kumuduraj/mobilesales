@@ -33,6 +33,46 @@ AGENT_PERMISSIONS = {
 AGENT_READ_DOCTYPES = tuple(AGENT_PERMISSIONS)
 
 
+def check_standard_permission_drift() -> list[str]:
+	"""After an ERPNext upgrade the standard DocPerms may change, but the Custom DocPerm copies made by
+	add_permission keep the old rules. Report (never fix) every DocType whose copy no longer matches the
+	standard rules for any role other than the Agent. Returns the drifted DocTypes."""
+	rights = ["permlevel", *(df.fieldname for df in frappe.get_meta("DocPerm").fields if df.fieldtype == "Check")]
+
+	def rules(doctype, source):
+		rows = frappe.get_all(source, filters={"parent": doctype, "role": ["!=", AGENT_ROLE]}, fields=["role", *rights])
+		return {(row.role, row.permlevel, row.if_owner): {r: row.get(r) or 0 for r in rights} for row in rows}
+
+	drifted = []
+	for doctype in AGENT_PERMISSIONS:
+		if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
+			continue
+		standard, custom = rules(doctype, "DocPerm"), rules(doctype, "Custom DocPerm")
+		differences = []
+		for key in sorted(set(standard) | set(custom)):
+			if standard.get(key) != custom.get(key):
+				role, level, if_owner = key
+				owner = ", if owner" if if_owner else ""
+				differences.append(
+					f"{role} (level {level}{owner}): standard {standard.get(key)} / custom {custom.get(key)}"
+				)
+		if not differences:
+			continue
+		drifted.append(doctype)
+		title = f"mobilesales: standard permissions changed for {doctype}, review Custom DocPerm"
+		print(title)
+		frappe.log_error(
+			title=title,
+			message=title
+			+ "\n\nThe Custom DocPerm copy no longer matches the standard DocPerm (Mobile Sales Agent ignored). "
+			"mobilesales did not change anything. Review in Role Permission Manager:\n"
+			+ "\n".join(differences),
+			reference_doctype="DocType",
+			reference_name=doctype,
+		)
+	return drifted
+
+
 def ensure_agent_permissions():
 	for doctype, rights in AGENT_PERMISSIONS.items():
 		rule = {"parent": doctype, "role": AGENT_ROLE, "permlevel": 0, "if_owner": 0}
