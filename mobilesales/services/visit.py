@@ -22,6 +22,7 @@ NO_SALE_OUTCOMES = ("No Sale", "Shop Closed")
 def validate_visit(visit):
 	trip, agent = invoicing.get_visit_context(visit)
 	settings = ms_settings.get_settings()
+	visit.client_ref = (visit.client_ref or "").strip() or None  # unique: empty must be NULL
 	visit.agent = trip.agent
 	visit.company = trip.company
 

@@ -51,6 +51,7 @@
   "sales_invoice",
   "column_break_links",
   "payment_entry",
+  "client_ref",
   "signature_section",
   "customer_signature",
   "amended_from"
@@ -374,6 +375,15 @@
    "allow_on_submit": 1
   },
   {
+   "fieldname": "client_ref",
+   "fieldtype": "Data",
+   "label": "Client Reference",
+   "unique": 1,
+   "no_copy": 1,
+   "read_only": 1,
+   "description": "Set by the mobile app once per visit; repeated submits return the same visit"
+  },
+  {
    "fieldname": "signature_section",
    "fieldtype": "Section Break",
    "label": "Signature",
@@ -398,7 +408,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 16:00:00.000000",
+ "modified": "2026-11-01 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Customer Visit",

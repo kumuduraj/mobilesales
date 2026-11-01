@@ -29,6 +29,7 @@ class MobileSalesSettings(Document):
 		self.validate_accounts()
 		self.validate_sales_person_parent()
 		self.validate_price_list()
+		self.validate_customer_defaults()
 		self.validate_naming_series()
 		self.warn_stock_settings()
 
@@ -188,6 +189,14 @@ class MobileSalesSettings(Document):
 					frappe.bold(self.sales_person_parent)
 				)
 			)
+
+	def validate_customer_defaults(self):
+		for doctype, fieldname in (("Customer Group", "default_customer_group"), ("Territory", "default_territory")):
+			value = self.get(fieldname)
+			if value and frappe.db.get_value(doctype, value, "is_group"):
+				frappe.throw(
+					_("{0} {1} must not be a group.").format(_(self.meta.get_label(fieldname)), frappe.bold(value))
+				)
 
 	def validate_price_list(self):
 		if self.selling_price_list and not frappe.db.get_value(
