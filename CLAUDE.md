@@ -8,7 +8,11 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 
 ## Environment
 - Bench: /home/rajerp/AgroPublic (user rajerp, no sudo)
-- Site: agrosys.evonet.lk (dev + test). Also installed: frappe_theme, evonav, slmfc, deliveryplan — never break them.
+- Sites on this bench:
+  - agrosys.evonet.lk — LIVE / pilot only: migrate, smoke (drafts + rollback), pilots, Raj's manual testing.
+    NEVER run-tests here. Also installed: frappe_theme, evonav, slmfc, deliveryplan — never break them.
+  - mstest.local — ALL test runs (frappe + erpnext + mobilesales only; allow_tests on; scheduler disabled;
+    own test company). Test data lives only here.
 - Company on site: Agro Republic (Pvt) Ltd (ARL). Batch-tracked FG items exist (spec §5.6).
 - Restart: never run sudo/supervisorctl. Ask Raj to run:
   sudo supervisorctl restart AgroPublic-web: AgroPublic-workers:
@@ -44,14 +48,28 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 13. Every business-flow test runs as the real role user (agent / store keeper / cashier / supervisor) via
     frappe.set_user. Administrator is allowed only for test data setup. A flow test that runs as
     Administrator is a bug.
+14. Tests must never commit. The shared test base replaces frappe.db.commit with an error; any code path that
+    commits (host pages, whitelisted endpoints) is tested with the commit blocked or mocked.
+15. Before running the suite, check for leftover test data (_MS Test*, ms.test.*); if found, STOP and report.
+16. Root session rules (the Claude session runs as root over VS Code Remote):
+   a. Run every bench, git, python, yarn and node command as rajerp:
+      sudo -u rajerp -H bash -lc 'cd /home/rajerp/AgroPublic && <command>'
+      Never run bench as root.
+   b. After creating or editing any file under /home/rajerp/AgroPublic, run:
+      chown -R rajerp:rajerp /home/rajerp/AgroPublic/apps/mobilesales
+   c. Before every commit and at the end of every task: run
+      find /home/rajerp/AgroPublic/apps/mobilesales -user root
+      and it must print nothing.
+   d. Never use sudo/supervisorctl for restarts — ask Raj.
+   e. Never touch files outside apps/mobilesales, sites/agrosys.evonet.lk and sites/mstest.local.
 
 ## Definition of done for EVERY task
-1. `bench --site agrosys.evonet.lk migrate` passes.
-2. Tests: `bench --site agrosys.evonet.lk set-config allow_tests true`,
-   `bench --site agrosys.evonet.lk run-tests --app mobilesales`, then set allow_tests false.
+1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.
+2. Tests on mstest.local only: rule 15 leftover check, then `bench --site mstest.local run-tests --app mobilesales`.
+   Never run-tests on agrosys.evonet.lk.
 3. Fixture-type record changed → `bench --site agrosys.evonet.lk export-fixtures --app mobilesales`.
 4. Frontend changed → `cd frontend && yarn build`.
-5. Core baseline check (rule 1); only mobilesales files changed.
+5. Core baseline check (rule 1); only mobilesales files changed; rule 16c find prints nothing.
 6. Commit (Conventional Commits) and `git push origin develop`.
 7. If Python/hooks changed, tell Raj a restart is needed.
 8. Report: what changed, files, test result, commit hash.
@@ -60,10 +78,13 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 1. Backup agrosys.evonet.lk.
 2. mv apps/mobilesales ~/mobilesales.local.bak ;
    git clone -b develop git@github-mobilesales:kumuduraj/mobilesales.git apps/mobilesales ;
-   ./env/bin/pip install -e apps/mobilesales ; migrate, build, tests.
-   On failure restore the local folder, fix, push, repeat.
-3. Smoke test: standard SO → DN → SI → PE on Finished Goods - ARL; one SLMFC Stock Entry; one deliveryplan Trip Sheet.
-4. Merge develop → main, tag v0.N.0, push main + tags — in a worktree, never in apps/mobilesales:
+   ./env/bin/pip install -e apps/mobilesales ; build; migrate + tests on mstest.local;
+   migrate + smoke on agrosys.evonet.lk. On failure restore the local folder, fix, push, repeat.
+3. Smoke test on agrosys (drafts + rollback): standard SO → DN → SI → PE on Finished Goods - ARL;
+   one SLMFC Stock Entry; one deliveryplan Trip Sheet. Anything needing real submitted documents on
+   agrosys → propose a mini live run and wait for Raj's OK.
+4. Set mobilesales/__init__.py `__version__` to the release version (commit on develop).
+5. Merge develop → main, tag v0.N.0, push main + tags — in a worktree, never in apps/mobilesales:
    `git worktree add /tmp/ms_main main && git -C /tmp/ms_main merge --no-ff origin/develop && git -C /tmp/ms_main tag … && git -C /tmp/ms_main push origin main --tags && git worktree remove /tmp/ms_main`
 
 ## Coding conventions
