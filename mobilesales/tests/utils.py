@@ -26,6 +26,11 @@ COUNTED_DOCTYPES = (
 	"Batch",
 	"Customer",
 	"Sales Invoice",
+	"Customer Visit",
+	"Item Price",
+	"Pricing Rule",
+	"Contact",
+	"Address",
 	"Stock Entry",
 	"Journal Entry",
 	"Payment Entry",
@@ -127,6 +132,9 @@ class MobileSalesTestCase(IntegrationTestCase):
 			.name
 		)
 
+		cls.price_list = frappe.db.get_value(
+			"Price List", {"selling": 1, "enabled": 1, "currency": frappe.get_cached_value("Company", cls.company, "default_currency")}
+		)
 		cls.settings = frappe.get_doc("Mobile Sales Settings")
 		cls.settings.update(
 			{
@@ -137,6 +145,8 @@ class MobileSalesTestCase(IntegrationTestCase):
 				"agent_cash_parent_account": cls.cash_group,
 				"main_cash_account": cls.main_cash,
 				"sales_person_parent": cls.sales_team,
+				"selling_price_list": cls.price_list,
+				"sinv_naming_series": "MB-SINV-.YY.-.#####",
 			}
 		)
 		cls._patches = [
@@ -162,6 +172,10 @@ class MobileSalesTestCase(IntegrationTestCase):
 		cls.batch_item = cls.make_item(f"{PREFIX} Batch Item", has_batch_no=1)
 		cls.batch_a = frappe.get_doc({"doctype": "Batch", "batch_id": f"{PREFIX} Batch A", "item": cls.batch_item}).insert().name
 		cls.batch_b = frappe.get_doc({"doctype": "Batch", "batch_id": f"{PREFIX} Batch B", "item": cls.batch_item}).insert().name
+		for item_code, rate in ((cls.plain_item, 100), (cls.batch_item, 200)):
+			frappe.get_doc(
+				{"doctype": "Item Price", "item_code": item_code, "price_list": cls.price_list, "price_list_rate": rate}
+			).insert()
 		make_receipt(cls.company, cls.plain_item, 50, cls.store)
 		make_receipt(cls.company, cls.batch_item, 5, cls.store, batch_no=cls.batch_a, posting_date=add_days(nowdate(), -2))
 		make_receipt(cls.company, cls.batch_item, 10, cls.store, batch_no=cls.batch_b, posting_date=add_days(nowdate(), -1))
