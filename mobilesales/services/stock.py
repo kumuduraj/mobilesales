@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import frappe
 from frappe import _
-from frappe.utils import flt, get_datetime, nowdate, nowtime
+from frappe.utils import flt, get_datetime, now_datetime, nowdate
 
 from erpnext.stock.get_item_details import get_conversion_factor
 
@@ -98,6 +98,20 @@ def get_bin_qty_map(warehouse, item_codes) -> dict:
 	)
 
 
+def lock_bin_qty(warehouse, item_codes) -> dict:
+	"""Bin actual_qty with row locks (SELECT ... FOR UPDATE) so two parallel visits cannot both
+	sell the last units: the second waits, then sees the reduced quantity."""
+	if not item_codes:
+		return {}
+	return dict(
+		frappe.db.sql(
+			"""select item_code, actual_qty from `tabBin`
+			where warehouse = %s and item_code in %s for update""",
+			(warehouse, tuple(item_codes)),
+		)
+	)
+
+
 def warehouse_has_stock(warehouse) -> bool:
 	return bool(frappe.db.exists("Bin", {"warehouse": warehouse, "actual_qty": ["!=", 0]}))
 
@@ -110,7 +124,8 @@ def make_transfer(trip, rows, purpose, source, target, posting_date=None):
 	se.company = trip.company
 	se.set_posting_time = 1
 	se.posting_date = posting_date or nowdate()
-	se.posting_time = nowtime()
+	# Whole seconds: a visit invoice in the same second must not sort before the stock arrived.
+	se.posting_time = now_datetime().strftime("%H:%M:%S")
 	se.from_warehouse = source
 	se.to_warehouse = target
 	se.mobile_trip = trip.name

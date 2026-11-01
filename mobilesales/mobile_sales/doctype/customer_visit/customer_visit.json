@@ -5,28 +5,384 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "agent",
   "mobile_trip",
+  "agent",
+  "agent_name",
+  "agent_user",
+  "company",
+  "column_break_header",
+  "customer",
+  "customer_name",
+  "visit_datetime",
+  "outcome",
+  "no_sale_reason",
+  "remarks",
+  "location_section",
+  "latitude",
+  "longitude",
+  "column_break_location",
+  "check_in_photo",
+  "customer_update_section",
+  "update_customer",
+  "new_customer_name",
+  "new_contact_person",
+  "new_mobile_no",
+  "column_break_update",
+  "new_email",
+  "new_address_line1",
+  "new_city",
+  "new_tax_id",
+  "customer_update_status",
+  "changes",
+  "shelf_section",
+  "shelf_stock",
+  "sale_section",
+  "sale_items",
+  "net_total",
+  "total_taxes",
+  "column_break_totals",
+  "grand_total",
+  "rounded_total",
+  "collection_section",
+  "collect_amount",
+  "collect_previous",
+  "total_collected",
+  "links_section",
+  "sales_invoice",
+  "column_break_links",
+  "payment_entry",
+  "signature_section",
+  "customer_signature",
   "amended_from"
  ],
  "fields": [
-  {
-   "fieldname": "agent",
-   "fieldtype": "Link",
-   "label": "Agent",
-   "options": "Mobile Sales Agent",
-   "reqd": 1,
-   "in_list_view": 1,
-   "in_standard_filter": 1
-  },
   {
    "fieldname": "mobile_trip",
    "fieldtype": "Link",
    "label": "Mobile Trip",
    "options": "Mobile Trip",
+   "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "options": "Mobile Sales Agent",
+   "fetch_from": "mobile_trip.agent",
+   "read_only": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "agent_name",
+   "fieldtype": "Data",
+   "label": "Agent Name",
+   "fetch_from": "mobile_trip.agent_name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "agent_user",
+   "fieldtype": "Link",
+   "label": "Agent User",
+   "options": "User",
+   "fetch_from": "mobile_trip.agent_user",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "fetch_from": "mobile_trip.company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "fetch_from": "customer.customer_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "visit_datetime",
+   "fieldtype": "Datetime",
+   "label": "Visit Date Time",
+   "reqd": 1,
+   "default": "now",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Select",
+   "label": "Outcome",
+   "options": "\nSale\nNo Sale\nCollection Only\nShop Closed",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "no_sale_reason",
+   "fieldtype": "Link",
+   "label": "No Sale Reason",
+   "options": "Visit No Sale Reason",
+   "depends_on": "eval:in_list(['No Sale','Shop Closed'], doc.outcome)",
+   "mandatory_depends_on": "eval:in_list(['No Sale','Shop Closed'], doc.outcome)"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "location_section",
+   "fieldtype": "Section Break",
+   "label": "Check-in",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "latitude",
+   "fieldtype": "Float",
+   "label": "Latitude",
+   "precision": "7"
+  },
+  {
+   "fieldname": "longitude",
+   "fieldtype": "Float",
+   "label": "Longitude",
+   "precision": "7"
+  },
+  {
+   "fieldname": "column_break_location",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "check_in_photo",
+   "fieldtype": "Attach Image",
+   "label": "Check-in Photo"
+  },
+  {
+   "fieldname": "customer_update_section",
+   "fieldtype": "Section Break",
+   "label": "Customer Update",
+   "collapsible": 1,
+   "collapsible_depends_on": "update_customer"
+  },
+  {
+   "fieldname": "update_customer",
+   "fieldtype": "Check",
+   "label": "Update Customer Details"
+  },
+  {
+   "fieldname": "new_customer_name",
+   "fieldtype": "Data",
+   "label": "New Customer Name",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "new_contact_person",
+   "fieldtype": "Data",
+   "label": "New Contact Person",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "new_mobile_no",
+   "fieldtype": "Data",
+   "label": "New Mobile No",
+   "options": "Phone",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "column_break_update",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "new_email",
+   "fieldtype": "Data",
+   "label": "New Email",
+   "options": "Email",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "new_address_line1",
+   "fieldtype": "Data",
+   "label": "New Address Line 1",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "new_city",
+   "fieldtype": "Data",
+   "label": "New City",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "new_tax_id",
+   "fieldtype": "Data",
+   "label": "New Tax ID",
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "customer_update_status",
+   "fieldtype": "Select",
+   "label": "Customer Update Status",
+   "options": "Not Requested\nApplied\nPending Approval\nRejected",
+   "default": "Not Requested",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "changes",
+   "fieldtype": "Table",
+   "label": "Changes",
+   "options": "Customer Visit Change",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
+   "depends_on": "update_customer"
+  },
+  {
+   "fieldname": "shelf_section",
+   "fieldtype": "Section Break",
+   "label": "Shelf Stock",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "shelf_stock",
+   "fieldtype": "Table",
+   "label": "Shelf Stock",
+   "options": "Customer Visit Shelf Stock"
+  },
+  {
+   "fieldname": "sale_section",
+   "fieldtype": "Section Break",
+   "label": "Sale",
+   "depends_on": "eval:doc.outcome=='Sale'"
+  },
+  {
+   "fieldname": "sale_items",
+   "fieldtype": "Table",
+   "label": "Items",
+   "options": "Customer Visit Item"
+  },
+  {
+   "fieldname": "net_total",
+   "fieldtype": "Currency",
+   "label": "Net Total",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "total_taxes",
+   "fieldtype": "Currency",
+   "label": "Total Taxes",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "label": "Grand Total",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "rounded_total",
+   "fieldtype": "Currency",
+   "label": "Payable (Rounded Total)",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "collection_section",
+   "fieldtype": "Section Break",
+   "label": "Collection"
+  },
+  {
+   "fieldname": "collect_amount",
+   "fieldtype": "Currency",
+   "label": "Collect Now (this invoice)",
+   "options": "Company:company:default_currency",
+   "depends_on": "eval:doc.outcome=='Sale'"
+  },
+  {
+   "fieldname": "collect_previous",
+   "fieldtype": "Table",
+   "label": "Previous Outstanding",
+   "options": "Customer Visit Collection"
+  },
+  {
+   "fieldname": "total_collected",
+   "fieldtype": "Currency",
+   "label": "Total Collected",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "links_section",
+   "fieldtype": "Section Break",
+   "label": "Documents"
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "label": "Sales Invoice",
+   "options": "Sales Invoice",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "column_break_links",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "signature_section",
+   "fieldtype": "Section Break",
+   "label": "Signature",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "customer_signature",
+   "fieldtype": "Signature",
+   "label": "Customer Signature"
   },
   {
    "fieldname": "amended_from",
@@ -42,7 +398,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 13:00:00.000000",
+ "modified": "2026-11-01 13:30:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Customer Visit",
@@ -80,6 +436,17 @@
    "amend": 1
   },
   {
+   "role": "Mobile Sales Agent",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "submit": 1,
+   "report": 1,
+   "print": 1,
+   "email": 1,
+   "share": 0
+  },
+  {
    "role": "Mobile Sales Store Keeper",
    "read": 1,
    "report": 1,
@@ -90,17 +457,12 @@
    "read": 1,
    "report": 1,
    "print": 1
-  },
-  {
-   "role": "Mobile Sales Agent",
-   "read": 1,
-   "report": 1,
-   "print": 1
   }
  ],
  "row_format": "Dynamic",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "customer_name",
  "track_changes": 1
 }

@@ -143,6 +143,32 @@ def _cancel_if_submitted(doctype, name):
 		doc.cancel()
 
 
+def update_trip_summary(trip_name):
+	"""Recompute the trip summary from submitted documents (never incremented)."""
+	outcomes = frappe.get_all(
+		"Customer Visit", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="outcome"
+	)
+	invoiced = frappe.get_all(
+		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="grand_total"
+	)
+	collected = frappe.get_all(
+		"Payment Entry", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="paid_amount"
+	)
+	frappe.db.set_value(
+		"Mobile Trip",
+		trip_name,
+		{
+			"visits": len(outcomes),
+			"sales_visits": outcomes.count("Sale"),
+			"no_sale_visits": sum(1 for o in outcomes if o in ("No Sale", "Shop Closed")),
+			"invoices": len(invoiced),
+			"invoiced_amount": sum(flt(v) for v in invoiced),
+			"collected_amount": sum(flt(v) for v in collected),
+		},
+		update_modified=False,
+	)
+
+
 # Whitelisted status actions
 
 
