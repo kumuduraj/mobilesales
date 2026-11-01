@@ -56,7 +56,8 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
    ./env/bin/pip install -e apps/mobilesales ; migrate, build, tests.
    On failure restore the local folder, fix, push, repeat.
 3. Smoke test: standard SO → DN → SI → PE on Finished Goods - ARL; one SLMFC Stock Entry; one deliveryplan Trip Sheet.
-4. Merge develop → main, tag v0.N.0, push main + tags.
+4. Merge develop → main, tag v0.N.0, push main + tags — in a worktree, never in apps/mobilesales:
+   `git worktree add /tmp/ms_main main && git -C /tmp/ms_main merge --no-ff origin/develop && git -C /tmp/ms_main tag … && git -C /tmp/ms_main push origin main --tags && git worktree remove /tmp/ms_main`
 
 ## Coding conventions
 - Business logic in mobilesales/services/*.py; controllers thin.
