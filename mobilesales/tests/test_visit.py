@@ -4,7 +4,7 @@ mobile voucher guards, agent permissions on standard DocTypes and naming series.
 import frappe
 from frappe.utils import flt, now_datetime, nowdate
 
-from mobilesales.overrides import guards
+from mobilesales.overrides import guards, permissions
 from mobilesales.services import customer_update, invoicing
 from mobilesales.services import trip as trip_service
 from mobilesales.setup.permissions import (
@@ -346,6 +346,30 @@ class TestCustomerVisit(MobileSalesTestCase):
 		invoices = [visit_a.sales_invoice, visit_b.sales_invoice]
 		self.assertEqual(sorted(frappe.get_list("Sales Invoice", filters={"name": ["in", invoices]}, pluck="name")), sorted(invoices))
 		self.assertTrue(all(frappe.has_permission("Sales Invoice", "read", doc=name) for name in invoices))
+
+	def test_agent_with_accounts_or_sales_role_keeps_standard_scope(self):
+		trip_b = self.start_trip(self.agent_b)
+		visit_b = self.visit(items=[{"item_code": self.plain_item, "qty": 1}], trip=trip_b)
+		user_a = self.agent_a.user
+		self.addCleanup(frappe.clear_cache, user=user_a)  # role cache must not outlive the savepoint
+		for role in ("Accounts Manager", "Accounts User", "Sales Manager", "Sales User"):
+			user = frappe.get_doc("User", user_a)
+			user.flags.ignore_permissions = True
+			user.add_roles(role)
+			frappe.set_user(user_a)
+			for doctype, field in (("Sales Invoice", "sales_invoice"), ("Payment Entry", "payment_entry")):
+				name = visit_b.get(field)
+				self.assertEqual(frappe.get_list(doctype, filters={"name": name}, pluck="name"), [name], (role, doctype))
+				self.assertTrue(frappe.has_permission(doctype, "read", doc=name), (role, doctype))
+			# Customer Visit role scope is lifted too (its User Permission from agent setup still applies).
+			self.assertEqual(permissions.visit_query_conditions(user_a), "", role)
+			self.assertTrue(permissions.visit_has_permission(visit_b, "read", user_a), role)
+			# Mobile Trip scope is unchanged: still own trips only.
+			self.assertNotEqual(permissions.trip_query_conditions(user_a), "", role)
+			frappe.set_user("Administrator")
+			user.reload()
+			user.flags.ignore_permissions = True
+			user.remove_roles(role)
 
 	# 12
 	def test_permission_integrity_for_existing_roles(self):
