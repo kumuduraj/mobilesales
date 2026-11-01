@@ -1,3 +1,21 @@
+## v0.2.0 — Phase 2: Mobile Trip and stock issue
+
+- Mobile Trip (MTRIP-.YY.-.#####): load items with UOM conversion and source availability, one open
+  trip per agent, empty-van check, issue Stock Entry on submit (batches auto-picked FIFO), optional
+  opening cash float Journal Entry (agent cash Dr / main cash Cr), status list indicators.
+- Child DocTypes Mobile Trip Load Item and Mobile Trip Stock Entry.
+- Status actions: Start Trip, End Day (agent or supervisor), Top-up Load (supervisor / store keeper).
+- Cancel only from Loaded with no submitted visits; reverses the float JE and all trip Stock Entries.
+- Guards: mobile Stock Entries and Journal Entries must come from app code; Stock Entry purpose must
+  match trip status and use only the trip van; mobile Sales Invoices only in In Field on the trip van
+  and not cancellable once Settled; mobile Payment / Journal Entries blocked on Settled trips.
+- Settings reject a root van group, a van group containing source/return/damage warehouses, or one
+  holding stocked non-agent warehouses.
+- Agents read only their own Mobile Trips (list, form and API).
+- API: get_context, get_van_stock (with batch-wise qty); Van Stock view on the trip form.
+- Customer Visit stub gets mobile_trip.
+- Tests: 31 (foundation + trip).
+
 ## v0.1.0 — Phase 1: foundation
 
 - DocTypes: Mobile Sales Settings (Single), Mobile Sales Agent, Mobile Route + Mobile Route Customer,

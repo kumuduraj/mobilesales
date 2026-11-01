@@ -345,6 +345,45 @@ class TestFoundation(IntegrationTestCase):
 	def test_settings_accept_valid_values(self):
 		self.settings.validate()
 
+	def _isolated(self):
+		frappe.db.savepoint("ms_settings_test")
+		self.addCleanup(frappe.db.rollback, save_point="ms_settings_test")
+
+	def _settings_copy(self, **overrides):
+		settings = frappe.get_doc(self.settings.as_dict())
+		settings.update(overrides)
+		return settings
+
+	def test_settings_reject_root_van_warehouse_group(self):
+		root = frappe.db.get_value("Warehouse", self.van_group, "parent_warehouse")
+		with self.assertRaisesRegex(frappe.ValidationError, "is a root warehouse"):
+			self._settings_copy(van_warehouse_group=root).validate()
+
+	def test_settings_reject_store_inside_van_group(self):
+		self._isolated()
+		inner = _warehouse(f"{PREFIX} Inner Store", self.van_group, self.company)
+		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse"):
+			with self.assertRaisesRegex(frappe.ValidationError, "must not be inside Van Warehouse Group"):
+				self._settings_copy(**{fieldname: inner}).validate()
+
+	def test_settings_reject_stocked_non_agent_warehouse_in_van_group(self):
+		self._isolated()
+		stray = _warehouse(f"{PREFIX} Stray", self.van_group, self.company)
+		receipt = frappe.get_doc(
+			{
+				"doctype": "Stock Entry",
+				"stock_entry_type": "Material Receipt",
+				"company": self.company,
+				"items": [{"item_code": self.item, "qty": 1, "t_warehouse": stray, "basic_rate": 50}],
+			}
+		)
+		# Guards would (rightly) block a receipt into the van group; bypass them to plant the stock.
+		with patch("mobilesales.overrides.guards.get_guard_context", return_value=guards.EMPTY_CONTEXT):
+			receipt.insert()
+			receipt.submit()
+		with self.assertRaisesRegex(frappe.ValidationError, "not agent vans"):
+			self._settings_copy().validate()
+
 	def test_agent_sees_only_own_agent_record(self):
 		agent_doc = frappe.get_doc("Mobile Sales Agent", self.agent)
 		self.assertTrue(permissions.is_restricted_agent(TEST_USER))

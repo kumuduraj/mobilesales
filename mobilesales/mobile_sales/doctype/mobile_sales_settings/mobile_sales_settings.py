@@ -58,14 +58,8 @@ class MobileSalesSettings(Document):
 			)
 
 	def validate_warehouses(self):
-		if self.van_warehouse_group and not frappe.db.get_value(
-			"Warehouse", self.van_warehouse_group, "is_group"
-		):
-			frappe.throw(
-				_("Van Warehouse Group {0} must be a group warehouse.").format(
-					frappe.bold(self.van_warehouse_group)
-				)
-			)
+		if self.van_warehouse_group:
+			self.validate_van_warehouse_group()
 
 		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse"):
 			value = self.get(fieldname)
@@ -75,6 +69,57 @@ class MobileSalesSettings(Document):
 						_(self.meta.get_label(fieldname)), frappe.bold(value)
 					)
 				)
+
+	def validate_van_warehouse_group(self):
+		"""Everything under the van group is guarded, so the group must not swallow real stores."""
+		group = frappe.db.get_value(
+			"Warehouse", self.van_warehouse_group, ["is_group", "parent_warehouse", "lft", "rgt"], as_dict=True
+		)
+		bold_group = frappe.bold(self.van_warehouse_group)
+		if not group.is_group:
+			frappe.throw(_("Van Warehouse Group {0} must be a group warehouse.").format(bold_group))
+		if not group.parent_warehouse:
+			frappe.throw(
+				_("Van Warehouse Group {0} is a root warehouse. Create a dedicated group under it.").format(
+					bold_group
+				)
+			)
+
+		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse"):
+			value = self.get(fieldname)
+			if not value:
+				continue
+			lft, rgt = frappe.db.get_value("Warehouse", value, ["lft", "rgt"])
+			if group.lft <= lft and rgt <= group.rgt:
+				frappe.throw(
+					_("{0} {1} must not be inside Van Warehouse Group {2}.").format(
+						_(self.meta.get_label(fieldname)), frappe.bold(value), bold_group
+					)
+				)
+
+		agent_vans = frappe.get_all(
+			"Mobile Sales Agent", filters={"van_warehouse": ["is", "set"]}, pluck="van_warehouse"
+		)
+		warehouse = frappe.qb.DocType("Warehouse")
+		bin = frappe.qb.DocType("Bin")
+		query = (
+			frappe.qb.from_(bin)
+			.join(warehouse)
+			.on(bin.warehouse == warehouse.name)
+			.select(bin.warehouse)
+			.distinct()
+			.where((warehouse.lft > group.lft) & (warehouse.rgt < group.rgt) & (bin.actual_qty != 0))
+		)
+		if agent_vans:
+			query = query.where(bin.warehouse.notin(agent_vans))
+		stocked = query.run(pluck=True)
+		if stocked:
+			frappe.throw(
+				_(
+					"Van Warehouse Group {0} contains warehouses with stock that are not agent vans: {1}. "
+					"Move them out of the group or empty them first."
+				).format(bold_group, ", ".join(frappe.bold(w) for w in stocked))
+			)
 
 	def validate_accounts(self):
 		if self.agent_cash_parent_account:

@@ -12,6 +12,16 @@ from mobilesales.services import settings as ms_settings
 CACHE_KEY = "mobilesales:guard_context"
 SUPERVISOR_ROLE = "Mobile Sales Supervisor"
 EMPTY_CONTEXT = {"van_group": None, "vans": frozenset(), "cash": frozenset()}
+INTERNAL_FLAG = "mobilesales_internal"
+# Trip statuses in which app code may post each kind of mobile Stock Entry.
+# Issue is posted from Mobile Trip.on_submit: trip already submitted, status still Draft.
+PURPOSE_TRIP_STATUSES = {
+	"Issue": ("Draft",),
+	"Top-up": ("Loaded", "In Field"),
+	"Return": ("Settling",),
+	"Damage": ("Settling",),
+	"Shortage": ("Settling",),
+}
 
 
 # Cached context
@@ -98,6 +108,66 @@ def _throw_cash(doctype_label, accounts):
 	)
 
 
+# Mobile Trip helpers
+
+
+def _get_trip(doc) -> frappe._dict:
+	trip = frappe.db.get_value(
+		"Mobile Trip", doc.mobile_trip, ["name", "docstatus", "status", "van_warehouse"], as_dict=True
+	)
+	if not trip:
+		frappe.throw(_("Mobile Trip {0} does not exist.").format(frappe.bold(doc.mobile_trip)))
+	return trip
+
+
+def _require_internal(doc, doctype_label):
+	"""Mobile-tagged vouchers are only created by app code, never by hand via UI or API."""
+	if not doc.flags.get(INTERNAL_FLAG):
+		frappe.throw(
+			_("{0} linked to a Mobile Trip can only be created by the Mobile Sales app.").format(
+				_(doctype_label)
+			),
+			title=_("Mobile Sales"),
+		)
+
+
+def _require_trip_status(trip, allowed, doctype_label):
+	if trip.docstatus != 1 or trip.status not in allowed:
+		frappe.throw(
+			_("{0} cannot be linked to Mobile Trip {1} while it is {2} (needs {3}).").format(
+				_(doctype_label),
+				frappe.bold(trip.name),
+				_(trip.status),
+				" / ".join(_(s) for s in allowed),
+			),
+			title=_("Mobile Sales: trip status"),
+		)
+
+
+def _require_trip_not_settled(trip, doctype_label):
+	if trip.status == "Settled":
+		frappe.throw(
+			_("Mobile Trip {0} is Settled; {1} can no longer change.").format(
+				frappe.bold(trip.name), _(doctype_label)
+			),
+			title=_("Mobile Sales: trip settled"),
+		)
+
+
+def _require_trip_van(trip, warehouses, doctype_label):
+	other = set(warehouses) - {trip.van_warehouse}
+	if other:
+		frappe.throw(
+			_("{0} for Mobile Trip {1} may only use van warehouse {2}, not {3}.").format(
+				_(doctype_label),
+				frappe.bold(trip.name),
+				frappe.bold(trip.van_warehouse),
+				", ".join(frappe.bold(w) for w in sorted(other)),
+			),
+			title=_("Mobile Sales: van warehouse"),
+		)
+
+
 # Handlers
 
 
@@ -106,28 +176,21 @@ def validate_sales_invoice(doc, method=None):
 	if not ctx:
 		return
 	used = _warehouses(doc, ("set_warehouse", "set_target_warehouse"), ("warehouse", "target_warehouse"))
-	vans = used & ctx["vans"]
 	if not doc.get("mobile_trip"):
+		vans = used & ctx["vans"]
 		if vans:
 			_throw_van("Sales Invoice", vans)
 		return
-	_validate_trip_warehouse(doc, used)
+
+	trip = _get_trip(doc)
+	_require_trip_status(trip, ("In Field",), "Sales Invoice")
+	_require_trip_van(trip, used, "Sales Invoice")
 
 
-def _validate_trip_warehouse(doc, used):
-	# TODO(Phase 2): Mobile Trip gets van_warehouse and status; until then this check is skipped.
-	# Also add before_cancel (no cancel once the trip is Settled) in Phase 2.
-	if not frappe.get_meta("Mobile Trip").has_field("van_warehouse"):
+def before_cancel_sales_invoice(doc, method=None):
+	if not doc.get("mobile_trip"):
 		return
-	trip_van = frappe.db.get_value("Mobile Trip", doc.mobile_trip, "van_warehouse")
-	other = used - {trip_van}
-	if other:
-		frappe.throw(
-			_("Mobile Sales Invoice must use only the trip van warehouse {0}, not {1}.").format(
-				frappe.bold(trip_van), ", ".join(frappe.bold(w) for w in sorted(other))
-			),
-			title=_("Mobile Sales: van warehouse"),
-		)
+	_require_trip_not_settled(_get_trip(doc), "Sales Invoice")
 
 
 def validate_delivery_note(doc, method=None):
@@ -153,26 +216,45 @@ def validate_stock_reconciliation(doc, method=None):
 
 def validate_stock_entry(doc, method=None):
 	ctx = _active_context()
-	if not ctx or doc.get("mobile_trip"):
+	if not ctx:
 		return
 	vans = _warehouses(doc, ("from_warehouse", "to_warehouse"), ("s_warehouse", "t_warehouse")) & ctx["vans"]
-	if vans:
-		_throw_van("Stock Entry", vans)
+	if not doc.get("mobile_trip"):
+		if vans:
+			_throw_van("Stock Entry", vans)
+		return
+
+	_require_internal(doc, "Stock Entry")
+	trip = _get_trip(doc)
+	allowed = PURPOSE_TRIP_STATUSES.get(doc.get("mobile_purpose"))
+	if not allowed:
+		frappe.throw(_("Mobile Purpose is required on a Stock Entry linked to a Mobile Trip."))
+	_require_trip_status(trip, allowed, _("Stock Entry ({0})").format(_(doc.mobile_purpose)))
+	_require_trip_van(trip, vans, "Stock Entry")
 
 
 def validate_payment_entry(doc, method=None):
 	ctx = _active_context()
-	if not ctx or doc.get("mobile_trip"):
+	if not ctx:
 		return
-	accounts = {doc.paid_to, doc.paid_from} & ctx["cash"]
-	if accounts:
-		_throw_cash("Payment Entry", accounts)
+	if not doc.get("mobile_trip"):
+		accounts = {doc.paid_to, doc.paid_from} & ctx["cash"]
+		if accounts:
+			_throw_cash("Payment Entry", accounts)
+		return
+
+	_require_trip_not_settled(_get_trip(doc), "Payment Entry")
 
 
 def validate_journal_entry(doc, method=None):
 	ctx = _active_context()
-	if not ctx or doc.get("mobile_trip"):
+	if not ctx:
 		return
-	accounts = {row.account for row in doc.get("accounts") or []} & ctx["cash"]
-	if accounts and SUPERVISOR_ROLE not in frappe.get_roles():
-		_throw_cash("Journal Entry", accounts)
+	if not doc.get("mobile_trip"):
+		accounts = {row.account for row in doc.get("accounts") or []} & ctx["cash"]
+		if accounts and SUPERVISOR_ROLE not in frappe.get_roles():
+			_throw_cash("Journal Entry", accounts)
+		return
+
+	_require_internal(doc, "Journal Entry")
+	_require_trip_not_settled(_get_trip(doc), "Journal Entry")

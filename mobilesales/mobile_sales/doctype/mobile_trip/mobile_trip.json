@@ -6,6 +6,32 @@
  "engine": "InnoDB",
  "field_order": [
   "agent",
+  "agent_name",
+  "agent_user",
+  "trip_date",
+  "route",
+  "column_break_main",
+  "status",
+  "company",
+  "van_warehouse",
+  "source_warehouse",
+  "cash_section",
+  "opening_cash_float",
+  "column_break_cash",
+  "opening_float_journal",
+  "load_section",
+  "load_items",
+  "stock_entries_section",
+  "stock_entries",
+  "summary_section",
+  "visits",
+  "sales_visits",
+  "no_sale_visits",
+  "column_break_summary",
+  "invoices",
+  "invoiced_amount",
+  "collected_amount",
+  "settlement",
   "amended_from"
  ],
  "fields": [
@@ -17,6 +43,196 @@
    "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "agent_name",
+   "fieldtype": "Data",
+   "label": "Agent Name",
+   "fetch_from": "agent.agent_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "agent_user",
+   "fieldtype": "Link",
+   "label": "Agent User",
+   "options": "User",
+   "fetch_from": "agent.user",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "trip_date",
+   "fieldtype": "Date",
+   "label": "Trip Date",
+   "reqd": 1,
+   "default": "Today",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "route",
+   "fieldtype": "Link",
+   "label": "Route",
+   "options": "Mobile Route"
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nLoaded\nIn Field\nSettling\nSettled\nCancelled",
+   "default": "Draft",
+   "read_only": 1,
+   "allow_on_submit": 1,
+   "no_copy": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "van_warehouse",
+   "fieldtype": "Link",
+   "label": "Van Warehouse",
+   "options": "Warehouse",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_warehouse",
+   "fieldtype": "Link",
+   "label": "Source Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "cash_section",
+   "fieldtype": "Section Break",
+   "label": "Cash"
+  },
+  {
+   "fieldname": "opening_cash_float",
+   "fieldtype": "Currency",
+   "label": "Opening Cash Float",
+   "options": "Company:company:default_currency",
+   "description": "Change given to the agent; posted main cash → agent cash on submit"
+  },
+  {
+   "fieldname": "column_break_cash",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "opening_float_journal",
+   "fieldtype": "Link",
+   "label": "Opening Float Journal",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "load_section",
+   "fieldtype": "Section Break",
+   "label": "Load"
+  },
+  {
+   "fieldname": "load_items",
+   "fieldtype": "Table",
+   "label": "Load Items",
+   "options": "Mobile Trip Load Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "stock_entries_section",
+   "fieldtype": "Section Break",
+   "label": "Stock Entries"
+  },
+  {
+   "fieldname": "stock_entries",
+   "fieldtype": "Table",
+   "label": "Stock Entries",
+   "options": "Mobile Trip Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "summary_section",
+   "fieldtype": "Section Break",
+   "label": "Summary",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "visits",
+   "fieldtype": "Int",
+   "label": "Visits",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "sales_visits",
+   "fieldtype": "Int",
+   "label": "Sales Visits",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "no_sale_visits",
+   "fieldtype": "Int",
+   "label": "No Sale Visits",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "column_break_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "invoices",
+   "fieldtype": "Int",
+   "label": "Invoices",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "invoiced_amount",
+   "fieldtype": "Currency",
+   "label": "Invoiced Amount",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "collected_amount",
+   "fieldtype": "Currency",
+   "label": "Collected Amount",
+   "options": "Company:company:default_currency",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "settlement",
+   "fieldtype": "Link",
+   "label": "Settlement",
+   "options": "Mobile Settlement",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
   },
   {
    "fieldname": "amended_from",
@@ -32,7 +248,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-01 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Trip",
@@ -72,8 +288,14 @@
   {
    "role": "Mobile Sales Store Keeper",
    "read": 1,
+   "write": 1,
+   "create": 1,
+   "submit": 1,
    "report": 1,
-   "print": 1
+   "export": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1
   },
   {
    "role": "Mobile Sales Cashier",
@@ -92,5 +314,6 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "agent_name",
  "track_changes": 1
 }

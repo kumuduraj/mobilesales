@@ -1,0 +1,105 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 12:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "item_name",
+  "has_batch_no",
+  "uom",
+  "conversion_factor",
+  "column_break_qty",
+  "qty",
+  "stock_uom",
+  "stock_qty",
+  "available_at_source"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "fetch_from": "item_code.item_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "has_batch_no",
+   "fieldtype": "Check",
+   "label": "Has Batch No",
+   "fetch_from": "item_code.has_batch_no",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "label": "Conversion Factor",
+   "read_only": 1,
+   "default": "1"
+  },
+  {
+   "fieldname": "column_break_qty",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "Stock UOM",
+   "options": "UOM",
+   "fetch_from": "item_code.stock_uom",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_qty",
+   "fieldtype": "Float",
+   "label": "Stock Qty",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "available_at_source",
+   "fieldtype": "Float",
+   "label": "Available at Source",
+   "read_only": 1,
+   "in_list_view": 1,
+   "no_copy": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-01 13:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "name": "Mobile Trip Load Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
