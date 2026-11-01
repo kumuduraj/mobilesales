@@ -109,6 +109,30 @@ fixtures = [
 			]
 		],
 	},
+	{
+		"dt": "Custom Field",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Sales Invoice-mobile_section",
+					"Sales Invoice-mobile_trip",
+					"Sales Invoice-customer_visit",
+					"Sales Invoice-is_mobile_sale",
+					"Payment Entry-mobile_section",
+					"Payment Entry-mobile_trip",
+					"Payment Entry-customer_visit",
+					"Stock Entry-mobile_section",
+					"Stock Entry-mobile_trip",
+					"Stock Entry-mobile_purpose",
+					"Journal Entry-mobile_section",
+					"Journal Entry-mobile_trip",
+					"Journal Entry-mobile_settlement",
+				],
+			]
+		],
+	},
 ]
 
 # Uninstallation
