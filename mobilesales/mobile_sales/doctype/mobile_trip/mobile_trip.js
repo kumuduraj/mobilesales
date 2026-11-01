@@ -36,6 +36,7 @@ frappe.ui.form.on("Mobile Trip", {
 		if (["Loaded", "In Field"].includes(frm.doc.status) && can_top_up) {
 			frm.add_custom_button(__("Top-up Load"), () => show_top_up_dialog(frm));
 		}
+		frm.add_custom_button(__("Van Stock"), () => show_van_stock(frm));
 	},
 
 	set_status_indicator(frm) {
@@ -60,6 +61,39 @@ function run_action(frm, method, args = {}) {
 		freeze: true,
 		callback(r) {
 			if (!r.exc) frm.reload_doc();
+		},
+	});
+}
+
+function show_van_stock(frm) {
+	frappe.call({
+		method: "mobilesales.api.mobile.get_van_stock",
+		args: { trip: frm.doc.name },
+		callback(r) {
+			const rows = r.message || [];
+			const esc = frappe.utils.escape_html;
+			const body = rows.length
+				? rows
+						.map((row) => {
+							const batches = (row.batches || [])
+								.map((b) => `${esc(b.batch_no)}: ${format_number(b.qty)}`)
+								.join("<br>");
+							return `<tr>
+								<td>${esc(row.item_code)}<br><small class="text-muted">${esc(row.item_name || "")}</small></td>
+								<td class="text-right">${format_number(row.actual_qty)} ${esc(row.stock_uom)}</td>
+								<td>${batches}</td>
+							</tr>`;
+						})
+						.join("")
+				: `<tr><td colspan="3" class="text-muted">${__("Van is empty")}</td></tr>`;
+			frappe.msgprint({
+				title: __("Van Stock: {0}", [frm.doc.van_warehouse]),
+				wide: true,
+				message: `<table class="table table-bordered">
+					<thead><tr><th>${__("Item")}</th><th class="text-right">${__("Qty")}</th><th>${__("Batches")}</th></tr></thead>
+					<tbody>${body}</tbody>
+				</table>`,
+			});
 		},
 	});
 }
