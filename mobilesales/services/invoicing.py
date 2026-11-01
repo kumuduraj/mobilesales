@@ -5,7 +5,7 @@ and tax code) and saved + submitted on visit submit, so visit and invoice totals
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, get_datetime
+from frappe.utils import cint, flt, get_datetime, getdate, nowtime, today
 
 from erpnext.accounts.party import get_party_account
 
@@ -43,7 +43,7 @@ def get_visit_context(visit) -> tuple[frappe._dict, frappe._dict]:
 def build_invoice(visit, save=False):
 	trip, agent = get_visit_context(visit)
 	settings = ms_settings.get_settings()
-	visit_dt = get_datetime(visit.visit_datetime)
+	posting_date, posting_time = posting_datetime(visit)
 
 	si = frappe.new_doc("Sales Invoice")
 	si.update(
@@ -51,8 +51,8 @@ def build_invoice(visit, save=False):
 			"company": trip.company,
 			"customer": visit.customer,
 			"set_posting_time": 1,
-			"posting_date": visit_dt.date(),
-			"posting_time": visit_dt.strftime("%H:%M:%S"),
+			"posting_date": posting_date,
+			"posting_time": posting_time,
 			"update_stock": 1,
 			"set_warehouse": trip.van_warehouse,
 			"selling_price_list": agent.selling_price_list or settings.selling_price_list,
@@ -92,6 +92,16 @@ def build_invoice(visit, save=False):
 	return si
 
 
+def posting_datetime(visit) -> tuple:
+	"""Today's visits post at the moment of submit, never at the (earlier) time the visit form was
+	opened: stock topped up in between would otherwise be backdated away. Back-dated trips post at
+	the visit time."""
+	visit_dt = get_datetime(visit.visit_datetime)
+	if getdate(visit_dt) == getdate(today()):
+		return getdate(today()), nowtime()
+	return visit_dt.date(), visit_dt.strftime("%H:%M:%S")
+
+
 def payable_amount(si) -> float:
 	if cint(si.disable_rounded_total) or not flt(si.rounded_total):
 		return flt(si.grand_total)
@@ -125,7 +135,7 @@ def make_payment_entry(visit, si=None):
 		return None
 
 	trip, agent = get_visit_context(visit)
-	posting_date = get_datetime(visit.visit_datetime).date()
+	posting_date = posting_datetime(visit)[0]
 	pe = frappe.new_doc("Payment Entry")
 	pe.update(
 		{

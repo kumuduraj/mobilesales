@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import frappe
 from frappe import _
-from frappe.utils import flt, get_datetime, now_datetime, nowdate
+from frappe.utils import flt, get_datetime, nowdate, nowtime
 
 from erpnext.stock.get_item_details import get_conversion_factor
 
@@ -124,8 +124,7 @@ def make_transfer(trip, rows, purpose, source, target, posting_date=None):
 	se.company = trip.company
 	se.set_posting_time = 1
 	se.posting_date = posting_date or nowdate()
-	# Whole seconds: a visit invoice in the same second must not sort before the stock arrived.
-	se.posting_time = now_datetime().strftime("%H:%M:%S")
+	se.posting_time = nowtime()
 	se.from_warehouse = source
 	se.to_warehouse = target
 	se.mobile_trip = trip.name
