@@ -41,6 +41,9 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     - apps.txt edits by hand (keep trailing newline), then ask Raj to restart immediately.
 12. Never git checkout/reset/switch commits inside apps/mobilesales while the site is running.
     For checking old commits use `git worktree add /tmp/<name> <commit>` and remove it after.
+13. Every business-flow test runs as the real role user (agent / store keeper / cashier / supervisor) via
+    frappe.set_user. Administrator is allowed only for test data setup. A flow test that runs as
+    Administrator is a bug.
 
 ## Definition of done for EVERY task
 1. `bench --site agrosys.evonet.lk migrate` passes.

@@ -106,3 +106,28 @@ def get_settlement_draft(trip: str) -> dict:
 	draft.mobile_trip = trip
 	reconciliation.refresh_settlement(draft)
 	return draft.as_dict(no_default_fields=True)
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def outstanding_invoice_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Previous Outstanding picker on Customer Visit: submitted invoices of one customer and company with
+	an outstanding balance. Served without the agent's own-trip invoice scope, but never wider."""
+	filters = frappe._dict(filters or {})
+	if not (filters.customer and filters.company):
+		return []
+	return frappe.get_all(
+		"Sales Invoice",
+		filters={
+			"customer": filters.customer,
+			"company": filters.company,
+			"docstatus": 1,
+			"outstanding_amount": [">", 0],
+			"name": ["like", f"%{txt}%"],
+		},
+		fields=["name", "posting_date", "outstanding_amount"],
+		order_by="posting_date asc, name asc",
+		start=start,
+		page_length=page_len,
+		as_list=True,
+	)

@@ -1,3 +1,15 @@
+## v0.4.1 — fixes from the live pilot
+
+- Fix: collection of previous invoices by agents. ERPNext re-reads each referenced invoice as the
+  session user; the visit now opens exactly the invoices it validated, for that request only. Agents
+  still cannot list, open or search other invoices. The Previous Outstanding picker lists only the
+  visit customer's submitted, outstanding invoices of the same company.
+- Fix: supervisor visit cancel. Mobile Sales Supervisor gets read + print on Sales Invoice and Payment
+  Entry (same Custom DocPerm mechanism, integrity- and drift-checked; no other role changed).
+- Agents may delete their own draft Customer Visits; submitted and cancelled visits never.
+- Tests now run every business flow as the real role user (agent, store keeper, cashier, supervisor,
+  standard office user); Administrator only prepares test data (CLAUDE.md rule 13). 72 tests.
+
 ## v0.4.0 — Phase 4: End-of-day Settlement
 
 - Mobile Settlement (MSET-.YY.-.#####, one per trip, only when the trip is Settling) with stock lines,

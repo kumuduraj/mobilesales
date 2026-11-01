@@ -2,6 +2,7 @@
 Mobile Sales Settings (never saved) and a fresh guard context per call. Each test runs inside a
 savepoint that is rolled back; the class rolls back everything and checks counts at the end."""
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import frappe
@@ -38,6 +39,42 @@ COUNTED_DOCTYPES = (
 	"GL Entry",
 	"Serial and Batch Bundle",
 )
+
+
+# Real role users for business flows (CLAUDE.md rule 13). "office" is standard, non-mobile staff.
+ROLE_USERS = {
+	"store": ("ms.test.store@example.com", ("Mobile Sales Store Keeper",)),
+	"cashier": ("ms.test.cashier@example.com", ("Mobile Sales Cashier",)),
+	"supervisor": ("ms.test.supervisor@example.com", ("Mobile Sales Supervisor",)),
+	"office": ("ms.test.office@example.com", ("Accounts User", "Accounts Manager", "Sales User", "Stock User")),
+}
+
+
+def make_role_users() -> frappe._dict:
+	users = frappe._dict()
+	for key, (email, roles) in ROLE_USERS.items():
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": f"{PREFIX} {key.title()}",
+					"send_welcome_email": 0,
+					"roles": [{"role": role} for role in roles],
+				}
+			).insert()
+		users[key] = email
+	return users
+
+
+@contextmanager
+def as_user(user):
+	"""Run a business flow as a real role user; always back to Administrator (test setup) after."""
+	frappe.set_user(user)
+	try:
+		yield
+	finally:
+		frappe.set_user("Administrator")
 
 
 def counts():
@@ -90,12 +127,13 @@ def make_receipt(company, item_code, qty, warehouse, rate=50, batch_no=None, pos
 class MobileSalesTestCase(IntegrationTestCase):
 	SHOW_TRANSACTION_COMMIT_WARNINGS = True
 	AGENT_USERS = ("ms.test.agent.a@example.com", "ms.test.agent.b@example.com")
-	EXTRA_USERS = ()  # other test users whose cached roles / permissions are cleared at the end
+	EXTRA_USERS = tuple(email for email, _roles in ROLE_USERS.values())  # caches cleared at the end
 
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()
 		cls.counts_before = counts()
+		cls.users = make_role_users()
 
 		cls.company = site_company()
 		root_wh = frappe.db.get_value(
@@ -186,7 +224,8 @@ class MobileSalesTestCase(IntegrationTestCase):
 			name = f"{PREFIX} Agent {'AB'[idx]}"
 			frappe.get_doc({"doctype": "User", "email": user, "first_name": name, "send_welcome_email": 0}).insert()
 			agent = frappe.get_doc({"doctype": "Mobile Sales Agent", "user": user, "agent_name": name}).insert()
-			agent_setup.setup_agent(agent.name)
+			with as_user(cls.users.supervisor):
+				agent_setup.setup_agent(agent.name)
 			cls.agents.append(frappe.get_doc("Mobile Sales Agent", agent.name))
 		cls.agent_a, cls.agent_b = cls.agents
 

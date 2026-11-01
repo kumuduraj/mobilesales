@@ -23,6 +23,15 @@ VOUCHER_UNRESTRICTED_ROLES = UNRESTRICTED_ROLES | {
 }
 
 
+COLLECTABLE_FLAG = "mobilesales_collectable_invoices"
+
+
+def collectable_invoices() -> frozenset:
+	"""Invoices the current request may read while a Customer Visit posts its Payment Entry.
+	Set only by services.visit for the invoices that visit already validated; never by user input."""
+	return frappe.flags.get(COLLECTABLE_FLAG) or frozenset()
+
+
 def is_restricted_agent(user: str | None = None, unrestricted_roles=UNRESTRICTED_ROLES) -> bool:
 	user = user or frappe.session.user
 	if user == "Administrator":
@@ -80,15 +89,29 @@ def visit_query_conditions(user: str | None = None) -> str:
 
 def visit_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
 	user = user or frappe.session.user
+	if ptype == "delete":
+		return _can_delete_visit(doc, user)
 	if not is_restricted_agent(user, VOUCHER_UNRESTRICTED_ROLES):
 		return True
-	agent = doc.get("agent") or (
-		doc.get("mobile_trip") and frappe.db.get_value("Mobile Trip", doc.mobile_trip, "agent")
-	)
+	agent = _visit_agent(doc)
 	if not agent:
 		# A new visit without a trip yet: validate() enforces the trip's agent on save.
 		return doc.is_new()
 	return _agent_user(agent) == user
+
+
+def _visit_agent(doc) -> str | None:
+	return doc.get("agent") or (
+		doc.get("mobile_trip") and frappe.db.get_value("Mobile Trip", doc.mobile_trip, "agent")
+	)
+
+
+def _can_delete_visit(doc, user) -> bool:
+	"""Supervisors delete as their role allows; anyone deleting through the Agent role (even with other
+	roles) only their own drafts, never submitted or cancelled visits."""
+	if user == "Administrator" or {"Mobile Sales Supervisor", "System Manager"} & set(frappe.get_roles(user)):
+		return True
+	return doc.get("docstatus") == 0 and _agent_user(_visit_agent(doc)) == user
 
 
 def sales_invoice_query_conditions(user: str | None = None) -> str:
@@ -110,6 +133,8 @@ def _mobile_voucher_conditions(doctype: str, user: str | None) -> str:
 def mobile_voucher_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
 	user = user or frappe.session.user
 	if not is_restricted_agent(user, VOUCHER_UNRESTRICTED_ROLES):
+		return True
+	if ptype in (None, "read", "select") and doc.get("name") in collectable_invoices():
 		return True
 	trip = doc.get("mobile_trip")
 	return bool(trip) and _agent_user(frappe.db.get_value("Mobile Trip", trip, "agent")) == user

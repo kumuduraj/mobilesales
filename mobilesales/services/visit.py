@@ -7,6 +7,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, getdate
 
+from mobilesales.overrides.permissions import COLLECTABLE_FLAG
 from mobilesales.services import customer_update, invoicing, stock
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
@@ -174,7 +175,16 @@ def on_submit(visit):
 			if info:
 				row.db_set("batch_info", info, update_modified=False)
 
-	pe = invoicing.make_payment_entry(visit, si)
+	# ERPNext re-reads every referenced invoice as the session user; an agent may not read standard or
+	# other trips' invoices, so open exactly the ones this visit validated, for this request only.
+	collectable = {row.sales_invoice for row in visit.collect_previous if flt(row.allocated) > 0}
+	if si:
+		collectable.add(si.name)
+	frappe.flags[COLLECTABLE_FLAG] = frozenset(collectable)
+	try:
+		pe = invoicing.make_payment_entry(visit, si)
+	finally:
+		frappe.flags[COLLECTABLE_FLAG] = None
 	if pe:
 		visit.db_set("payment_entry", pe.name)
 	trip_service.update_trip_summary(trip.name)

@@ -12,7 +12,8 @@ from mobilesales.setup.permissions import (
 	ROLE_PERMISSIONS,
 	check_standard_permission_drift,
 )
-from mobilesales.tests.utils import PREFIX, MobileSalesTestCase
+from mobilesales.api import mobile as mobile_api
+from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, as_user, leaf
 
 RIGHTS = (
 	"permlevel", "if_owner", "select", "read", "write", "create", "delete", "submit", "cancel", "amend",
@@ -42,17 +43,26 @@ class TestCustomerVisit(MobileSalesTestCase):
 				],
 			}
 		)
-		trip.insert()
-		trip.submit()
+		with as_user(self.users.store):
+			trip.insert()
+			trip.submit()
 		if start:
-			trip_service.start_trip(trip.name)
+			with as_user(agent.user):
+				trip_service.start_trip(trip.name)
 		return frappe.get_doc("Mobile Trip", trip.name)
 
-	def visit(self, outcome="Sale", items=None, trip=None, collect="full", submit=True, **fields):
+	def visit(self, outcome="Sale", items=None, trip=None, collect="full", submit=True, user=None, **fields):
+		"""Record a visit as the trip's own agent (or `user`), like the agent does on the road."""
+		trip = trip or self.trip_a
+		user = user or frappe.db.get_value("Mobile Sales Agent", trip.agent, "user")
+		with as_user(user):
+			return self._visit(outcome, items, trip, collect, submit, **fields)
+
+	def _visit(self, outcome, items, trip, collect, submit, **fields):
 		doc = frappe.get_doc(
 			{
 				"doctype": "Customer Visit",
-				"mobile_trip": (trip or self.trip_a).name,
+				"mobile_trip": trip.name,
 				"customer": self.customer,
 				"visit_datetime": now_datetime(),
 				"outcome": outcome,
@@ -92,6 +102,11 @@ class TestCustomerVisit(MobileSalesTestCase):
 		si.submit()
 		return si
 
+	def other_customer(self):
+		return frappe.get_doc(
+			{"doctype": "Customer", "customer_name": f"{PREFIX} Other Customer", "customer_group": leaf("Customer Group"), "territory": leaf("Territory")}
+		).insert().name
+
 	# 1
 	def test_no_sale_updates_customer_directly(self):
 		self.set_setting("apply_customer_updates_directly", 1)
@@ -126,23 +141,21 @@ class TestCustomerVisit(MobileSalesTestCase):
 		self.assertEqual({r.status for r in visit.changes}, {"Pending Approval"})
 		self.assertFalse(frappe.db.get_value("Customer", self.customer, "tax_id"))
 
-		self.assertEqual(customer_update.approve_customer_update(visit.name), "Applied")
+		with as_user(self.users.supervisor):
+			self.assertEqual(customer_update.approve_customer_update(visit.name), "Applied")
 		self.assertEqual(frappe.db.get_value("Customer", self.customer, "tax_id"), "TAX-1")
 		address = frappe.db.get_value("Customer", self.customer, "customer_primary_address")
 		self.assertEqual(frappe.db.get_value("Address", address, "city"), "Kandy")
 
 		rejected = self.visit("No Sale", no_sale_reason=self.reason, update_customer=1, new_tax_id="TAX-2")
-		self.assertEqual(customer_update.reject_customer_update(rejected.name), "Rejected")
+		with as_user(self.users.supervisor):
+			self.assertEqual(customer_update.reject_customer_update(rejected.name), "Rejected")
 		self.assertEqual(frappe.db.get_value("Customer", self.customer, "tax_id"), "TAX-1")
 		rejected.reload()
 		self.assertEqual({r.status for r in rejected.changes}, {"Rejected"})
 
-		self.as_agent_a()
-		with self.assertRaises(frappe.PermissionError):
+		with as_user(self.agent_a.user), self.assertRaises(frappe.PermissionError):
 			customer_update.approve_customer_update(rejected.name)
-
-	def as_agent_a(self):
-		frappe.set_user(self.agent_a.user)
 
 	# 3
 	def test_cash_sale_creates_invoice_and_payment(self):
@@ -252,25 +265,22 @@ class TestCustomerVisit(MobileSalesTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "only possible while it is In Field"):
 			self.visit("No Sale", no_sale_reason=self.reason, trip=loaded_b, submit=False)
 
-		frappe.set_user(self.agent_b.user)
 		with self.assertRaises((frappe.PermissionError, frappe.ValidationError)):
-			self.visit("No Sale", no_sale_reason=self.reason, submit=False)
+			self.visit("No Sale", no_sale_reason=self.reason, submit=False, user=self.agent_b.user)
 
 	def test_agent_can_record_own_visit(self):
-		frappe.set_user(self.agent_a.user)
 		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])
-		self.assertEqual(visit.docstatus, 1)
+		self.assertEqual((visit.docstatus, visit.owner), (1, self.agent_a.user))
 		self.assertTrue(visit.sales_invoice and visit.payment_entry)
 
 	# 9
 	def test_cancel_chain(self):
 		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 3}])
-		frappe.set_user(self.agent_a.user)
-		with self.assertRaises(frappe.PermissionError):
+		with as_user(self.agent_a.user), self.assertRaises(frappe.PermissionError):
 			frappe.get_doc("Customer Visit", visit.name).cancel()
 
-		frappe.set_user("Administrator")
-		frappe.get_doc("Customer Visit", visit.name).cancel()
+		with as_user(self.users.supervisor):
+			frappe.get_doc("Customer Visit", visit.name).cancel()
 		self.assertEqual(frappe.db.get_value("Payment Entry", visit.payment_entry, "docstatus"), 2)
 		self.assertEqual(frappe.db.get_value("Sales Invoice", visit.sales_invoice, "docstatus"), 2)
 		self.assertEqual(self.van_qty(self.plain_item), 10)
@@ -280,7 +290,7 @@ class TestCustomerVisit(MobileSalesTestCase):
 	def test_cancel_rejected_on_settled_trip(self):
 		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])
 		frappe.db.set_value("Mobile Trip", self.trip_a.name, "status", "Settled")
-		with self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
+		with as_user(self.users.supervisor), self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
 			frappe.get_doc("Customer Visit", visit.name).cancel()
 
 	# 10
@@ -295,7 +305,9 @@ class TestCustomerVisit(MobileSalesTestCase):
 				"items": [{"item_code": self.plain_item, "qty": 1, "rate": 100, "warehouse": self.agent_a.van_warehouse}],
 			}
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
+		with as_user(self.users.office), self.assertRaisesRegex(
+			frappe.ValidationError, "can only be created by the Mobile Sales app"
+		):
 			si.insert()
 
 		def payment(paid_to):
@@ -316,20 +328,19 @@ class TestCustomerVisit(MobileSalesTestCase):
 				}
 			)
 
-		with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
-			payment(self.agent_a.cash_account).insert()
-		flagged = payment(self.main_cash)
-		flagged.flags[guards.INTERNAL_FLAG] = True
-		with self.assertRaisesRegex(frappe.ValidationError, "must be paid to the agent cash account"):
-			flagged.insert()
+		with as_user(self.users.office):
+			with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
+				payment(self.agent_a.cash_account).insert()
+			flagged = payment(self.main_cash)
+			flagged.flags[guards.INTERNAL_FLAG] = True
+			with self.assertRaisesRegex(frappe.ValidationError, "must be paid to the agent cash account"):
+				flagged.insert()
 
 	# 11
 	def test_agents_see_only_own_visits_invoices_payments(self):
 		trip_b = self.start_trip(self.agent_b)
 		visit_a = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])
 		visit_b = self.visit(items=[{"item_code": self.plain_item, "qty": 1}], trip=trip_b)
-
-		frappe.get_doc({"doctype": "User", "email": "ms.test.accounts@example.com", "first_name": f"{PREFIX} Accounts", "send_welcome_email": 0, "roles": [{"role": "Accounts User"}]}).insert()
 
 		frappe.set_user(self.agent_a.user)
 		for doctype, field in (("Customer Visit", "name"), ("Sales Invoice", "sales_invoice"), ("Payment Entry", "payment_entry")):
@@ -341,7 +352,7 @@ class TestCustomerVisit(MobileSalesTestCase):
 				frappe.get_doc(doctype, other).check_permission("read")
 		self.assertFalse(frappe.has_permission("Sales Invoice", "create"))
 
-		frappe.set_user("ms.test.accounts@example.com")
+		frappe.set_user(self.users.office)
 		invoices = [visit_a.sales_invoice, visit_b.sales_invoice]
 		self.assertEqual(sorted(frappe.get_list("Sales Invoice", filters={"name": ["in", invoices]}, pluck="name")), sorted(invoices))
 		self.assertTrue(all(frappe.has_permission("Sales Invoice", "read", doc=name) for name in invoices))
@@ -407,6 +418,84 @@ class TestCustomerVisit(MobileSalesTestCase):
 		standard_options = frappe.db.get_value("DocField", {"parent": "Sales Invoice", "fieldname": "naming_series"}, "options").split("\n")
 		self.assertEqual(options[: len(standard_options)], standard_options)
 		self.assertIn("MB-SINV-.YY.-.#####", options)
-		si = self.standard_invoice(100)
+		with as_user(self.users.office):
+			si = self.standard_invoice(100)
 		self.assertEqual(si.naming_series, standard_options[0])
 		self.assertFalse(si.is_mobile_sale)
+
+	# Collections of previous invoices by the agent (pilot finding, fix option 1)
+
+	def test_agent_collects_standard_invoice_but_cannot_read_it_otherwise(self):
+		standard = self.standard_invoice(300)  # test data: an office invoice, not from any trip
+		visit = self.visit("Collection Only", collect_previous=[{"sales_invoice": standard.name, "allocated": 120}])
+		pe = frappe.get_doc("Payment Entry", visit.payment_entry)
+		self.assertEqual((pe.owner, [(r.reference_name, r.allocated_amount) for r in pe.references]), (self.agent_a.user, [(standard.name, 120)]))
+		self.assertEqual(frappe.db.get_value("Sales Invoice", standard.name, "outstanding_amount"), 180)
+		self.assertFalse(frappe.flags.get(permissions.COLLECTABLE_FLAG))
+
+		with as_user(self.agent_a.user):
+			self.assertEqual(frappe.get_list("Sales Invoice", filters={"name": standard.name}, pluck="name"), [])
+			self.assertFalse(frappe.has_permission("Sales Invoice", "read", doc=standard.name))
+			with self.assertRaises(frappe.PermissionError):
+				frappe.get_doc("Sales Invoice", standard.name).check_permission("read")
+			from frappe.desk.search import search_widget
+
+			found = search_widget("Sales Invoice", txt=standard.name, as_dict=False) or []
+			self.assertNotIn(standard.name, [row[0] for row in found])
+
+	def test_collection_of_other_customers_invoice_rejected(self):
+		foreign = frappe.get_doc(
+			{"doctype": "Sales Invoice", "company": self.company, "customer": self.other_customer(),
+			 "items": [{"item_code": self.plain_item, "qty": 1, "rate": 100, "warehouse": self.store}]}
+		).insert()  # fmt: skip
+		foreign.submit()
+		with self.assertRaisesRegex(frappe.ValidationError, "does not belong to customer"):
+			self.visit("Collection Only", collect_previous=[{"sales_invoice": foreign.name, "allocated": 10}], submit=False)
+
+	def test_previous_outstanding_picker(self):
+		first, second = self.standard_invoice(100), self.standard_invoice(200)
+		paid = self.standard_invoice(50)
+		self.visit("Collection Only", collect_previous=[{"sales_invoice": paid.name, "allocated": 50}])
+		foreign = frappe.get_doc(
+			{"doctype": "Sales Invoice", "company": self.company, "customer": self.other_customer(),
+			 "items": [{"item_code": self.plain_item, "qty": 1, "rate": 70, "warehouse": self.store}]}
+		).insert()  # fmt: skip
+		foreign.submit()
+
+		with as_user(self.agent_a.user):
+			rows = mobile_api.outstanding_invoice_query(
+				"Sales Invoice", "", "name", 0, 50, {"customer": self.customer, "company": self.company}
+			)
+			self.assertEqual({row[0] for row in rows}, {first.name, second.name})
+			self.assertEqual(mobile_api.outstanding_invoice_query("Sales Invoice", "", "name", 0, 50, {}), [])
+
+	def test_sale_and_previous_collection_in_one_visit(self):
+		standard = self.standard_invoice(200)
+		visit = self.visit(
+			items=[{"item_code": self.plain_item, "qty": 1}],
+			collect_previous=[{"sales_invoice": standard.name, "allocated": 80}],
+		)
+		pe = frappe.get_doc("Payment Entry", visit.payment_entry)
+		self.assertEqual(visit.total_collected, visit.rounded_total + 80)
+		self.assertEqual(
+			{(r.reference_name, r.allocated_amount) for r in pe.references},
+			{(visit.sales_invoice, visit.rounded_total), (standard.name, 80)},
+		)
+		self.assertEqual(frappe.db.get_value("Sales Invoice", standard.name, "outstanding_amount"), 120)
+
+	def test_agent_deletes_only_own_draft_visits(self):
+		own_draft = self.visit("No Sale", no_sale_reason=self.reason, submit=False)
+		trip_b = self.start_trip(self.agent_b)
+		other_draft = self.visit("No Sale", no_sale_reason=self.reason, trip=trip_b, submit=False)
+		own_submitted = self.visit("No Sale", no_sale_reason=self.reason)
+		own_cancelled = self.visit("No Sale", no_sale_reason=self.reason)
+		with as_user(self.users.supervisor):
+			frappe.get_doc("Customer Visit", own_cancelled.name).cancel()
+
+		with as_user(self.agent_a.user):
+			frappe.delete_doc("Customer Visit", own_draft.name)
+			for name in (other_draft.name, own_submitted.name, own_cancelled.name):
+				with self.assertRaises(frappe.PermissionError, msg=name):
+					frappe.delete_doc("Customer Visit", name)
+		self.assertFalse(frappe.db.exists("Customer Visit", own_draft.name))
+		self.assertTrue(all(frappe.db.exists("Customer Visit", n) for n in (other_draft.name, own_submitted.name, own_cancelled.name)))
