@@ -35,6 +35,8 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     with restart_supervisor_on_update=true they call sudo supervisorctl and fail. Use:
     - new code from GitHub: git clone into apps/mobilesales + ./env/bin/pip install -e apps/mobilesales
     - apps.txt edits by hand (keep trailing newline), then ask Raj to restart immediately.
+12. Never git checkout/reset/switch commits inside apps/mobilesales while the site is running.
+    For checking old commits use `git worktree add /tmp/<name> <commit>` and remove it after.
 
 ## Definition of done for EVERY task
 1. `bench --site agrosys.evonet.lk migrate` passes.
