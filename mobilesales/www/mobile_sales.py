@@ -1,5 +1,7 @@
 """Host page of the Mobile Sales phone app (/mobile-sales). The SPA itself is built from frontend/."""
 
+import json
+
 import frappe
 from frappe.boot import load_translations
 
@@ -29,5 +31,6 @@ def get_context(context):
 	)
 	load_translations(boot)
 	boot.messages = boot.pop("__messages", {})
-	context.boot = boot
+	# The template's tojson uses plain json.dumps (no dates); encode like /api/method responses do.
+	context.boot = json.loads(frappe.as_json(boot))
 	return context

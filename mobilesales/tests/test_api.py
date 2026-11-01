@@ -1,10 +1,15 @@
 """Phase 5: phone-app API (spec §6.2) and the SPA host page, every call as the real user (rule 13)."""
 
 import base64
+import json
+import re
 from unittest.mock import patch
 
 import frappe
 from frappe.utils import flt, nowdate
+from frappe.website.serve import get_response
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 from mobilesales.api import mobile as api
 from mobilesales.services import trip as trip_service
@@ -112,8 +117,45 @@ class TestMobileAPI(MobileSalesTestCase):
 			context = host_page.get_context(frappe._dict())
 			commit.assert_called_once()
 			self.assertFalse(context.get("not_allowed"))
-			self.assertEqual(context.boot.context["agent"].name, self.agent_a.name)
-			self.assertTrue(context.boot.csrf_token)
+			self.assertEqual(context.boot["context"]["agent"]["name"], self.agent_a.name)
+			self.assertTrue(context.boot["csrf_token"])
+
+	def render_host_page(self, user):
+		"""Full /mobile-sales render through Frappe's page renderer (context + template), as a logged-in user.
+		The page commits the CSRF token; the commit is mocked (rule 14)."""
+		previous = getattr(frappe.local, "request", None)
+		frappe.local.request = Request(EnvironBuilder(path="/mobile-sales", base_url="http://localhost").get_environ())
+		self.addCleanup(setattr, frappe.local, "request", previous)
+		with as_user(user), patch.object(frappe.db, "commit"):
+			response = get_response("mobile-sales")
+		return response.status_code, response.get_data(as_text=True)
+
+	def test_host_page_renders_for_every_logged_in_role(self):
+		# Agent with an open trip: the boot data carries dates (trip_date) and must still render.
+		trip = self.load_trip(self.agent_a)
+		status, html = self.render_host_page(self.agent_a.user)
+		self.assertEqual(status, 200, html[:2000])
+		boot = json.loads(re.search(r"window\.ms_boot = (.*?);\n", html).group(1))
+		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
+		self.assertEqual(boot["context"]["agent"]["name"], self.agent_a.name)
+		self.assertTrue(boot["csrf_token"])
+		self.assertIn('<div id="app"></div>', html)
+
+		# Agent without an open trip.
+		status, html = self.render_host_page(self.agent_b.user)
+		self.assertEqual(status, 200, html[:2000])
+		self.assertIsNone(json.loads(re.search(r"window\.ms_boot = (.*?);\n", html).group(1))["context"]["trip"])
+
+		# Supervisor (no agent record): the app shell loads; the SPA itself says "not set up as an agent".
+		status, html = self.render_host_page(self.users.supervisor)
+		self.assertEqual(status, 200, html[:2000])
+		self.assertIsNone(json.loads(re.search(r"window\.ms_boot = (.*?);\n", html).group(1))["context"]["agent"])
+
+		# Logged-in non-agent: the clear "not allowed" page, never a 500, and no boot data.
+		status, html = self.render_host_page(self.users.office)
+		self.assertEqual(status, 200, html[:2000])
+		self.assertIn("This app is only for mobile sales agents.", html)
+		self.assertNotIn("ms_boot", html)
 
 	def test_agent_b_cannot_use_agent_a_data(self):
 		trip = self.load_trip(self.agent_a)
