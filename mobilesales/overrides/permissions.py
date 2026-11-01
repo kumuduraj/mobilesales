@@ -113,3 +113,22 @@ def mobile_voucher_has_permission(doc, ptype: str | None = None, user: str | Non
 		return True
 	trip = doc.get("mobile_trip")
 	return bool(trip) and _agent_user(frappe.db.get_value("Mobile Trip", trip, "agent")) == user
+
+
+def settlement_query_conditions(user: str | None = None) -> str:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return ""
+	return f"`tabMobile Settlement`.`agent` in {_own_agents_sql(user)}"
+
+
+def settlement_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return True
+	agent = doc.get("agent") or (
+		doc.get("mobile_trip") and frappe.db.get_value("Mobile Trip", doc.mobile_trip, "agent")
+	)
+	if not agent:
+		return doc.is_new()
+	return _agent_user(agent) == user

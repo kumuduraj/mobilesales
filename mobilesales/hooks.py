@@ -194,6 +194,7 @@ permission_query_conditions = {
 	"Customer Visit": "mobilesales.overrides.permissions.visit_query_conditions",
 	"Sales Invoice": "mobilesales.overrides.permissions.sales_invoice_query_conditions",
 	"Payment Entry": "mobilesales.overrides.permissions.payment_entry_query_conditions",
+	"Mobile Settlement": "mobilesales.overrides.permissions.settlement_query_conditions",
 }
 
 has_permission = {
@@ -202,6 +203,7 @@ has_permission = {
 	"Customer Visit": "mobilesales.overrides.permissions.visit_has_permission",
 	"Sales Invoice": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
 	"Payment Entry": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
+	"Mobile Settlement": "mobilesales.overrides.permissions.settlement_has_permission",
 }
 
 # Document Events
