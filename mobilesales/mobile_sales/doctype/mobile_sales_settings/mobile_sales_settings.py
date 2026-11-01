@@ -5,6 +5,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from mobilesales.overrides.guards import clear_guard_cache
+
 WAREHOUSE_FIELDS = ("source_warehouse", "return_warehouse", "damage_warehouse", "van_warehouse_group")
 ACCOUNT_FIELDS = (
 	"agent_cash_parent_account",
@@ -27,6 +29,9 @@ class MobileSalesSettings(Document):
 		self.validate_sales_person_parent()
 		self.validate_price_list()
 		self.warn_stock_settings()
+
+	def on_update(self):
+		clear_guard_cache()
 
 	def validate_company_links(self):
 		linked = [

@@ -191,13 +191,19 @@ has_permission = {
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Sales Invoice": {"validate": "mobilesales.overrides.guards.validate_sales_invoice"},
+	"Delivery Note": {"validate": "mobilesales.overrides.guards.validate_delivery_note"},
+	"Stock Reconciliation": {"validate": "mobilesales.overrides.guards.validate_stock_reconciliation"},
+	"Stock Entry": {"validate": "mobilesales.overrides.guards.validate_stock_entry"},
+	"Payment Entry": {"validate": "mobilesales.overrides.guards.validate_payment_entry"},
+	"Journal Entry": {"validate": "mobilesales.overrides.guards.validate_journal_entry"},
+	"Warehouse": {
+		"on_update": "mobilesales.overrides.guards.on_warehouse_change",
+		"on_trash": "mobilesales.overrides.guards.on_warehouse_change",
+		"after_rename": "mobilesales.overrides.guards.on_warehouse_change",
+	},
+}
 
 # Scheduled Tasks
 # ---------------

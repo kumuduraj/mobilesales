@@ -6,6 +6,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
+from mobilesales.overrides.guards import clear_guard_cache
 from mobilesales.services import settings as ms_settings
 
 
@@ -19,6 +20,12 @@ class MobileSalesAgent(Document):
 			frappe.throw(_("Max Discount % must be between 0 and 100."))
 		if flt(self.credit_limit_per_invoice) < 0:
 			frappe.throw(_("Credit Limit per Invoice cannot be negative."))
+
+	def on_update(self):
+		clear_guard_cache()
+
+	def on_trash(self):
+		clear_guard_cache()
 
 	def validate_unique_user(self):
 		other = frappe.db.get_value(
