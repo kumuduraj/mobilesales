@@ -66,13 +66,17 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     For www pages that means the full render (frappe.website.serve.get_response: context AND template),
     not just get_context(); the v0.5.0 host page passed its get_context test but returned 500 for a
     logged-in agent with an open trip (tojson cannot encode dates).
+18. The SPA must have a mount test: vitest + jsdom (or happy-dom), mounting App with a realistic ms_boot (agent
+    with open trip, agent without trip, non-agent) and every route rendered once. The build fails if any route
+    throws. (frontend/tests/mount.test.js; `yarn build` runs `vitest run` first. v0.5.0 shipped a blank screen:
+    templates called __() which www pages do not define — register helpers on app.config.globalProperties.)
 
 ## Definition of done for EVERY task
 1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.
 2. Tests on mstest.local only: rule 15 leftover check, then `bench --site mstest.local run-tests --app mobilesales`.
    Never run-tests on agrosys.evonet.lk.
 3. Fixture-type record changed → `bench --site agrosys.evonet.lk export-fixtures --app mobilesales`.
-4. Frontend changed → `cd frontend && yarn build`.
+4. Frontend changed → `cd frontend && yarn build` (runs the SPA mount test first, rule 18; never skip it).
 5. Core baseline check (rule 1); only mobilesales files changed; rule 16c find prints nothing.
 6. Commit (Conventional Commits) and `git push origin develop`.
 7. If Python/hooks changed, tell Raj a restart is needed.
