@@ -3,6 +3,18 @@
 
 from frappe.model.document import Document
 
+from mobilesales.services import visit as visit_service
+
 
 class CustomerVisit(Document):
-	pass
+	def validate(self):
+		visit_service.validate_visit(self)
+
+	def on_submit(self):
+		visit_service.on_submit(self)
+
+	def before_cancel(self):
+		visit_service.before_cancel(self)
+
+	def on_cancel(self):
+		visit_service.on_cancel(self)

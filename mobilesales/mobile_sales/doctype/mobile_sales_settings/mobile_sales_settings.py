@@ -28,7 +28,18 @@ class MobileSalesSettings(Document):
 		self.validate_accounts()
 		self.validate_sales_person_parent()
 		self.validate_price_list()
+		self.validate_naming_series()
 		self.warn_stock_settings()
+
+	def validate_naming_series(self):
+		if self.sinv_naming_series and self.sinv_naming_series not in frappe.get_meta(
+			"Sales Invoice"
+		).get_naming_series_options():
+			frappe.throw(
+				_("Naming series {0} is not an option on Sales Invoice. Run migrate or add it first.").format(
+					frappe.bold(self.sinv_naming_series)
+				)
+			)
 
 	def on_update(self):
 		clear_guard_cache()

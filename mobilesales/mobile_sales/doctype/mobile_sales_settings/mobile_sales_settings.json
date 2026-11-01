@@ -53,7 +53,8 @@
    "fieldname": "sinv_naming_series",
    "fieldtype": "Data",
    "label": "Mobile Sales Invoice Naming Series",
-   "description": "e.g. MB-SINV-.YY.-.#####"
+   "description": "e.g. MB-SINV-.YY.-.#####",
+   "default": "MB-SINV-.YY.-.#####"
   },
   {
    "fieldname": "default_tax_template",
@@ -188,7 +189,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-01 13:30:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",

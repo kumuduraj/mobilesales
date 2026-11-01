@@ -98,6 +98,20 @@ def get_bin_qty_map(warehouse, item_codes) -> dict:
 	)
 
 
+def lock_bin_qty(warehouse, item_codes) -> dict:
+	"""Bin actual_qty with row locks (SELECT ... FOR UPDATE) so two parallel visits cannot both
+	sell the last units: the second waits, then sees the reduced quantity."""
+	if not item_codes:
+		return {}
+	return dict(
+		frappe.db.sql(
+			"""select item_code, actual_qty from `tabBin`
+			where warehouse = %s and item_code in %s for update""",
+			(warehouse, tuple(item_codes)),
+		)
+	)
+
+
 def warehouse_has_stock(warehouse) -> bool:
 	return bool(frappe.db.exists("Bin", {"warehouse": warehouse, "actual_qty": ["!=", 0]}))
 

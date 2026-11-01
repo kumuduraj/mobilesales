@@ -1,3 +1,25 @@
+## v0.3.0 — Phase 3: Customer Visit, invoicing, collection
+
+- Customer Visit (CV-.YY.-.######) with outcomes Sale / No Sale / Collection Only / Shop Closed and
+  child tables for items, shelf stock, previous-invoice collections and customer changes.
+- Visit totals come from an unsaved ERPNext Sales Invoice (pricing rules, taxes, rounding); the same
+  builder creates the real invoice on submit. Manual line discount capped by the agent's limit.
+- Submit: van stock re-checked under row lock, Sales Invoice (update_stock from the van, agent sales
+  team, MB-SINV series, optional default tax template, FIFO batches) and one Payment Entry to the agent
+  cash account covering the new invoice and selected previous invoices; batches shown per line.
+- Credit rules: cash only, or up to the agent's per-invoice credit limit when credit sales are allowed.
+- Customer updates (name, tax ID, contact, mobile, email, address) captured with old values; applied
+  directly or approved / rejected by a supervisor.
+- Cancel (supervisor, trip not settled): Payment Entry, then Sales Invoice; trip summary recomputed.
+- Guards: mobile Sales Invoices and Payment Entries only from app code; payments only to the trip
+  agent's cash account. Invoices and payments post at submit time.
+- Sales Invoice naming series option MB-SINV-.YY.-.##### added without changing the default.
+- Agent access: read on 10 masters, read + print own Sales Invoices / Payment Entries, select on
+  Account, own Customer Visits only. Existing roles' permissions unchanged (Custom DocPerm copies);
+  migrate warns if ERPNext's standard permissions later drift from those copies.
+- Print formats: Mobile Invoice 4in, Mobile Collection Receipt (not default).
+- Tests: 49.
+
 ## v0.2.0 — Phase 2: Mobile Trip and stock issue
 
 - Mobile Trip (MTRIP-.YY.-.#####): load items with UOM conversion and source availability, one open

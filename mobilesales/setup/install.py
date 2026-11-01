@@ -1,4 +1,10 @@
 import frappe
+from frappe.custom.doctype.property_setter.property_setter import make_property_setter
+from frappe.model.naming import NamingSeries
+
+from mobilesales.setup.permissions import check_standard_permission_drift, ensure_agent_permissions
+
+MOBILE_SINV_SERIES = "MB-SINV-.YY.-.#####"
 
 # (reason, category, requires_remark)
 DEFAULT_NO_SALE_REASONS = (
@@ -19,15 +25,34 @@ def after_install():
 	duplicates or overwrites site data. No accounts or warehouses are created here.
 	"""
 	create_default_no_sale_reasons()
+	add_mobile_invoice_series()
+	ensure_agent_permissions()
 
 
 def after_migrate():
 	"""Run after every `bench migrate`.
 
-	Idempotent and never touches documents owned by other apps
+	Idempotent and never removes or reorders anything owned by other apps
 	(frappe, erpnext, slmfc, deliveryplan, ...).
 	"""
 	create_default_no_sale_reasons()
+	add_mobile_invoice_series()
+	ensure_agent_permissions()
+	check_standard_permission_drift()
+
+
+def add_mobile_invoice_series():
+	"""Append the mobile series to Sales Invoice naming_series options, the way Document Naming
+	Settings does (Property Setter on 'options'). Existing options keep their order, so the first
+	option (the standard default) stays the default; the 'default' property is never touched."""
+	options = frappe.get_meta("Sales Invoice").get_naming_series_options()
+	if MOBILE_SINV_SERIES in options:
+		return
+	NamingSeries(MOBILE_SINV_SERIES).validate()
+	make_property_setter(
+		"Sales Invoice", "naming_series", "options", "\n".join([*options, MOBILE_SINV_SERIES]), "Text"
+	)
+	frappe.clear_cache(doctype="Sales Invoice")
 
 
 def create_default_no_sale_reasons():

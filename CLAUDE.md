@@ -13,6 +13,10 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 - Restart: never run sudo/supervisorctl. Ask Raj to run:
   sudo supervisorctl restart AgroPublic-web: AgroPublic-workers:
   (other benches share this server — never "restart all")
+- 13 DocTypes use Custom DocPerm copies (made by mobilesales/setup/permissions.py to give Mobile Sales Agent
+  access): Customer, Item, UOM, Price List, Item Price, Batch, Contact, Address, Territory, Customer Group,
+  Sales Invoice, Payment Entry, Account. After every ERPNext upgrade check migrate output / Error Log for
+  the mobilesales permission warning ("mobilesales: standard permissions changed for <DocType>").
 
 ## Non-negotiable rules
 1. NEVER modify apps/frappe, apps/erpnext or any other app. Before every commit:
@@ -56,7 +60,8 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
    ./env/bin/pip install -e apps/mobilesales ; migrate, build, tests.
    On failure restore the local folder, fix, push, repeat.
 3. Smoke test: standard SO → DN → SI → PE on Finished Goods - ARL; one SLMFC Stock Entry; one deliveryplan Trip Sheet.
-4. Merge develop → main, tag v0.N.0, push main + tags.
+4. Merge develop → main, tag v0.N.0, push main + tags — in a worktree, never in apps/mobilesales:
+   `git worktree add /tmp/ms_main main && git -C /tmp/ms_main merge --no-ff origin/develop && git -C /tmp/ms_main tag … && git -C /tmp/ms_main push origin main --tags && git worktree remove /tmp/ms_main`
 
 ## Coding conventions
 - Business logic in mobilesales/services/*.py; controllers thin.

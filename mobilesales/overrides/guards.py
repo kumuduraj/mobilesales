@@ -113,7 +113,7 @@ def _throw_cash(doctype_label, accounts):
 
 def _get_trip(doc) -> frappe._dict:
 	trip = frappe.db.get_value(
-		"Mobile Trip", doc.mobile_trip, ["name", "docstatus", "status", "van_warehouse"], as_dict=True
+		"Mobile Trip", doc.mobile_trip, ["name", "agent", "docstatus", "status", "van_warehouse"], as_dict=True
 	)
 	if not trip:
 		frappe.throw(_("Mobile Trip {0} does not exist.").format(frappe.bold(doc.mobile_trip)))
@@ -182,6 +182,7 @@ def validate_sales_invoice(doc, method=None):
 			_throw_van("Sales Invoice", vans)
 		return
 
+	_require_internal(doc, "Sales Invoice")
 	trip = _get_trip(doc)
 	_require_trip_status(trip, ("In Field",), "Sales Invoice")
 	_require_trip_van(trip, used, "Sales Invoice")
@@ -243,7 +244,17 @@ def validate_payment_entry(doc, method=None):
 			_throw_cash("Payment Entry", accounts)
 		return
 
-	_require_trip_not_settled(_get_trip(doc), "Payment Entry")
+	_require_internal(doc, "Payment Entry")
+	trip = _get_trip(doc)
+	_require_trip_not_settled(trip, "Payment Entry")
+	agent_cash = frappe.db.get_value("Mobile Sales Agent", trip.agent, "cash_account")
+	if doc.paid_to != agent_cash:
+		frappe.throw(
+			_("Payment Entry for Mobile Trip {0} must be paid to the agent cash account {1}.").format(
+				frappe.bold(trip.name), frappe.bold(agent_cash)
+			),
+			title=_("Mobile Sales: agent cash account"),
+		)
 
 
 def validate_journal_entry(doc, method=None):

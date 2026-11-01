@@ -1,0 +1,68 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 12:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "qty_on_shelf",
+  "uom",
+  "expiry_date",
+  "competitor_item",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "qty_on_shelf",
+   "fieldtype": "Float",
+   "label": "Qty on Shelf",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "expiry_date",
+   "fieldtype": "Date",
+   "label": "Expiry Date",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "competitor_item",
+   "fieldtype": "Data",
+   "label": "Competitor Item",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-01 13:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "name": "Customer Visit Shelf Stock",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

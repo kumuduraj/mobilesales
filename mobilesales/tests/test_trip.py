@@ -187,7 +187,7 @@ class TestMobileTrip(MobileSalesTestCase):
 		trip = self.make_trip()
 
 		def invoice(warehouse):
-			return frappe.get_doc(
+			si = frappe.get_doc(
 				{
 					"doctype": "Sales Invoice",
 					"company": self.company,
@@ -197,6 +197,8 @@ class TestMobileTrip(MobileSalesTestCase):
 					"items": [{"item_code": self.plain_item, "qty": 1, "rate": 100, "warehouse": warehouse}],
 				}
 			)
+			si.flags[guards.INTERNAL_FLAG] = True  # as the visit service would
+			return si
 
 		with self.assertRaisesRegex(frappe.ValidationError, "needs In Field"):
 			invoice(trip.van_warehouse).insert()
@@ -249,6 +251,7 @@ class TestMobileTrip(MobileSalesTestCase):
 				"mobile_trip": trip.name,
 			}
 		)
+		pe.flags[guards.INTERNAL_FLAG] = True  # reach the Settled check, not the internal-flag check
 		with self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
 			pe.insert()
 
