@@ -393,3 +393,17 @@ class TestMobileSettlement(MobileSalesTestCase):
 		doc = self.approve_flow(self.draft(frappe.get_doc("Mobile Trip", trip.name), returned={self.batch_item: 4}).name)
 		self.assertEqual(doc.docstatus, 1)
 		self.assertEqual(frappe.db.get_value("Stock Entry", doc.return_entry, "owner"), CASHIER)
+
+	def test_reject_from_pending_cashier_clears_verifiers(self):
+		trip = self.run_trip([(self.plain_item, 2)])
+		doc = self.draft(trip, returned={self.plain_item: 2})
+		self.act(doc.name, "Submit for Verification", self.agent_a.user)
+		doc = self.act(doc.name, "Verify Stock", STORE_KEEPER)
+		self.assertEqual((doc.workflow_state, doc.verified_by_store), ("Pending Cashier", STORE_KEEPER))
+
+		doc = self.act(doc.name, "Reject", CASHIER)
+		self.assertEqual((doc.workflow_state, doc.docstatus), ("Draft", 0))
+		self.assertFalse(doc.verified_by_store or doc.verified_by_cashier)
+
+		doc = self.approve_flow(doc.name)  # recounted and verified again from Draft
+		self.assertEqual((doc.docstatus, doc.verified_by_store, doc.verified_by_cashier), (1, STORE_KEEPER, CASHIER))

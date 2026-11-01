@@ -102,6 +102,11 @@ def validate_edit_rules(doc, before):
 def set_verifiers(doc, before):
 	if before.workflow_state == doc.workflow_state:
 		return
+	if doc.workflow_state == WORKFLOW_DRAFT:
+		# Any Reject sends the settlement back for recount: earlier verifications no longer hold.
+		doc.verified_by_store = None
+		doc.verified_by_cashier = None
+		return
 	if before.workflow_state == "Pending Store" and doc.workflow_state == "Pending Cashier":
 		doc.verified_by_store = frappe.session.user
 	if before.workflow_state == "Pending Cashier" and doc.workflow_state in ("Approved", "Pending Approval"):
