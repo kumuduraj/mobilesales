@@ -23,6 +23,15 @@ VOUCHER_UNRESTRICTED_ROLES = UNRESTRICTED_ROLES | {
 }
 
 
+COLLECTABLE_FLAG = "mobilesales_collectable_invoices"
+
+
+def collectable_invoices() -> frozenset:
+	"""Invoices the current request may read while a Customer Visit posts its Payment Entry.
+	Set only by services.visit for the invoices that visit already validated; never by user input."""
+	return frappe.flags.get(COLLECTABLE_FLAG) or frozenset()
+
+
 def is_restricted_agent(user: str | None = None, unrestricted_roles=UNRESTRICTED_ROLES) -> bool:
 	user = user or frappe.session.user
 	if user == "Administrator":
@@ -110,6 +119,8 @@ def _mobile_voucher_conditions(doctype: str, user: str | None) -> str:
 def mobile_voucher_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
 	user = user or frappe.session.user
 	if not is_restricted_agent(user, VOUCHER_UNRESTRICTED_ROLES):
+		return True
+	if ptype in (None, "read", "select") and doc.get("name") in collectable_invoices():
 		return True
 	trip = doc.get("mobile_trip")
 	return bool(trip) and _agent_user(frappe.db.get_value("Mobile Trip", trip, "agent")) == user

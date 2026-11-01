@@ -8,12 +8,8 @@ frappe.ui.form.on("Customer Visit", {
 		frm.set_query("mobile_trip", () => ({ filters: { status: "In Field", docstatus: 1 } }));
 		frm.set_query("item_code", "sale_items", () => ({ filters: { is_sales_item: 1, disabled: 0 } }));
 		frm.set_query("sales_invoice", "collect_previous", () => ({
-			filters: {
-				customer: frm.doc.customer,
-				company: frm.doc.company,
-				docstatus: 1,
-				outstanding_amount: [">", 0],
-			},
+			query: "mobilesales.api.mobile.outstanding_invoice_query",
+			filters: { customer: frm.doc.customer, company: frm.doc.company },
 		}));
 	},
 
