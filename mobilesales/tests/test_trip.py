@@ -8,7 +8,7 @@ from erpnext.stock.doctype.batch.batch import get_batch_qty
 from mobilesales.api import mobile as mobile_api
 from mobilesales.overrides import guards
 from mobilesales.services import trip as trip_service
-from mobilesales.tests.utils import MobileSalesTestCase
+from mobilesales.tests.utils import MobileSalesTestCase, as_user
 
 
 class TestMobileTrip(MobileSalesTestCase):
@@ -25,17 +25,17 @@ class TestMobileTrip(MobileSalesTestCase):
 				"load_items": items or [{"item_code": self.plain_item, "qty": 3}],
 			}
 		)
-		trip.insert()
-		if submit:
-			trip.submit()
-			trip.reload()
-		return trip
+		with as_user(self.users.store):  # trips are loaded by the store keeper
+			trip.insert()
+			if submit:
+				trip.submit()
+		return frappe.get_doc("Mobile Trip", trip.name)
 
 	def van_qty(self, agent, item_code):
 		return flt(frappe.db.get_value("Bin", {"warehouse": agent.van_warehouse, "item_code": item_code}, "actual_qty"))
 
 	def as_user(self, user):
-		frappe.set_user(user)
+		frappe.set_user(user)  # undone by the per-test cleanup (back to Administrator)
 
 	# 1
 	def test_submit_moves_load_to_van(self):
@@ -114,7 +114,8 @@ class TestMobileTrip(MobileSalesTestCase):
 	# 8
 	def test_top_up(self):
 		trip = self.make_trip()
-		se_name = trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 2}])
+		with as_user(self.users.store):
+			se_name = trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 2}])
 		trip.reload()
 		self.assertEqual([r.purpose for r in trip.stock_entries], ["Issue", "Top-up"])
 		self.assertEqual(frappe.db.get_value("Stock Entry", se_name, "mobile_purpose"), "Top-up")
@@ -124,17 +125,19 @@ class TestMobileTrip(MobileSalesTestCase):
 		with self.assertRaises(frappe.PermissionError):
 			trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 1}])
 
-		self.as_user("Administrator")
-		trip_service.start_trip(trip.name)
+		trip_service.start_trip(trip.name)  # still the agent
 		trip_service.end_day(trip.name)
-		with self.assertRaisesRegex(frappe.ValidationError, "needs status"):
+		with as_user(self.users.store), self.assertRaisesRegex(frappe.ValidationError, "needs status"):
 			trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 1}])
 
 	# 9
 	def test_cancel_from_loaded_reverses_everything(self):
 		trip = self.make_trip(opening_cash_float=300)
 		se_name = trip.stock_entries[0].stock_entry
-		trip.cancel()
+		with as_user(self.users.store), self.assertRaises(frappe.PermissionError):
+			frappe.get_doc("Mobile Trip", trip.name).cancel()
+		with as_user(self.users.supervisor):
+			frappe.get_doc("Mobile Trip", trip.name).cancel()
 		trip.reload()
 		self.assertEqual(trip.status, "Cancelled")
 		self.assertEqual(frappe.db.get_value("Stock Entry", se_name, "docstatus"), 2)
@@ -142,10 +145,10 @@ class TestMobileTrip(MobileSalesTestCase):
 		self.assertEqual(self.van_qty(self.agent_a, self.plain_item), 0)
 
 		in_field = self.make_trip()
-		trip_service.start_trip(in_field.name)
-		in_field.reload()
-		with self.assertRaisesRegex(frappe.ValidationError, "Only a Loaded trip"):
-			in_field.cancel()
+		with as_user(self.agent_a.user):
+			trip_service.start_trip(in_field.name)
+		with as_user(self.users.supervisor), self.assertRaisesRegex(frappe.ValidationError, "Only a Loaded trip"):
+			frappe.get_doc("Mobile Trip", in_field.name).cancel()
 
 	# 10
 	def test_manual_mobile_stock_entry_rejected(self):
@@ -162,7 +165,9 @@ class TestMobileTrip(MobileSalesTestCase):
 				],
 			}
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
+		with as_user(self.users.office), self.assertRaisesRegex(
+			frappe.ValidationError, "can only be created by the Mobile Sales app"
+		):
 			se.insert()
 
 	def test_internal_stock_entry_must_use_trip_van(self):
@@ -180,7 +185,7 @@ class TestMobileTrip(MobileSalesTestCase):
 			}
 		)
 		se.flags[guards.INTERNAL_FLAG] = True
-		with self.assertRaisesRegex(frappe.ValidationError, "may only use van warehouse"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "may only use van warehouse"):
 			se.insert()
 
 	def test_mobile_sales_invoice_rules(self):
@@ -200,21 +205,23 @@ class TestMobileTrip(MobileSalesTestCase):
 			si.flags[guards.INTERNAL_FLAG] = True  # as the visit service would
 			return si
 
-		with self.assertRaisesRegex(frappe.ValidationError, "needs In Field"):
+		# Guard rules on an invoice built as app code would, posted by an accounts user.
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "needs In Field"):
 			invoice(trip.van_warehouse).insert()
 
-		trip_service.start_trip(trip.name)
-		with self.assertRaisesRegex(frappe.ValidationError, "may only use van warehouse"):
-			invoice(self.store).insert()
-
-		si = invoice(trip.van_warehouse)
-		si.insert()
-		si.submit()
+		with as_user(self.agent_a.user):
+			trip_service.start_trip(trip.name)
+		with as_user(self.users.office):
+			with self.assertRaisesRegex(frappe.ValidationError, "may only use van warehouse"):
+				invoice(self.store).insert()
+			si = invoice(trip.van_warehouse)
+			si.insert()
+			si.submit()
 		self.assertEqual(self.van_qty(self.agent_a, self.plain_item), 2)
 
 		frappe.db.set_value("Mobile Trip", trip.name, "status", "Settled")
-		with self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
-			si.cancel()
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
+			frappe.get_doc("Sales Invoice", si.name).cancel()
 
 	def test_mobile_journal_and_payment_rules(self):
 		trip = self.make_trip()
@@ -230,7 +237,9 @@ class TestMobileTrip(MobileSalesTestCase):
 				],
 			}
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
+		with as_user(self.users.office), self.assertRaisesRegex(
+			frappe.ValidationError, "can only be created by the Mobile Sales app"
+		):
 			je.insert()
 
 		frappe.db.set_value("Mobile Trip", trip.name, "status", "Settled")
@@ -252,7 +261,7 @@ class TestMobileTrip(MobileSalesTestCase):
 			}
 		)
 		pe.flags[guards.INTERNAL_FLAG] = True  # reach the Settled check, not the internal-flag check
-		with self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "is Settled"):
 			pe.insert()
 
 	# 11

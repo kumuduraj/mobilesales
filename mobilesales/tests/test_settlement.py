@@ -12,27 +12,17 @@ from mobilesales.api import mobile as mobile_api
 from mobilesales.overrides import guards
 from mobilesales.services import invoicing, reconciliation, settlement
 from mobilesales.services import trip as trip_service
-from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, leaf, make_receipt, make_warehouse
+from mobilesales.tests.utils import PREFIX, ROLE_USERS, MobileSalesTestCase, as_user, make_receipt, make_warehouse
 
-STORE_KEEPER = "ms.test.store@example.com"
-CASHIER = "ms.test.cashier@example.com"
-SUPERVISOR = "ms.test.supervisor@example.com"
+STORE_KEEPER = ROLE_USERS["store"][0]
+CASHIER = ROLE_USERS["cashier"][0]
+SUPERVISOR = ROLE_USERS["supervisor"][0]
 
 
 class TestMobileSettlement(MobileSalesTestCase):
-	EXTRA_USERS = (STORE_KEEPER, CASHIER, SUPERVISOR)
-
 	@classmethod
 	def setUpClass(cls):
-		super().setUpClass()
-		for user, role in (
-			(STORE_KEEPER, "Mobile Sales Store Keeper"),
-			(CASHIER, "Mobile Sales Cashier"),
-			(SUPERVISOR, "Mobile Sales Supervisor"),
-		):
-			frappe.get_doc(
-				{"doctype": "User", "email": user, "first_name": f"{PREFIX} {role}", "send_welcome_email": 0, "roles": [{"role": role}]}
-			).insert()
+		super().setUpClass()  # creates the store keeper / cashier / supervisor / office users
 
 		root_wh = frappe.db.get_value("Warehouse", cls.store, "parent_warehouse")
 		cls.damage_wh = make_warehouse(f"{PREFIX} Damaged", root_wh, cls.company)
@@ -83,16 +73,24 @@ class TestMobileSettlement(MobileSalesTestCase):
 				"opening_cash_float": opening_cash_float,
 				"load_items": [{"item_code": item, "qty": qty} for item, qty in load],
 			}
-		).insert()
-		trip.submit()
-		trip_service.start_trip(trip.name)
-		for items in sales:
-			self.sell(trip.name, items)
-		if end_day:
-			trip_service.end_day(trip.name)
+		)
+		with as_user(self.users.store):
+			trip.insert()
+			trip.submit()
+		with as_user(agent.user):
+			trip_service.start_trip(trip.name)
+			for items in sales:
+				self._sell(trip.name, items)
+			if end_day:
+				trip_service.end_day(trip.name)
 		return frappe.get_doc("Mobile Trip", trip.name)
 
 	def sell(self, trip_name, items):
+		agent_user = frappe.db.get_value("Mobile Sales Agent", frappe.db.get_value("Mobile Trip", trip_name, "agent"), "user")
+		with as_user(agent_user):
+			return self._sell(trip_name, items)
+
+	def _sell(self, trip_name, items):
 		visit = frappe.get_doc(
 			{
 				"doctype": "Customer Visit",
@@ -334,22 +332,23 @@ class TestMobileSettlement(MobileSalesTestCase):
 	# 12
 	def test_lifecycle_rules(self):
 		in_field = self.run_trip([(self.plain_item, 5)], end_day=False)
-		with self.assertRaisesRegex(frappe.ValidationError, "settle only after End Day"):
-			frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
-
-		draft_visit = frappe.get_doc(
-			{"doctype": "Customer Visit", "mobile_trip": in_field.name, "customer": self.customer, "visit_datetime": now_datetime(),
-			 "outcome": "Sale", "sale_items": [{"item_code": self.plain_item, "qty": 1}], "collect_amount": 100}
-		).insert()  # fmt: skip
-		with self.assertRaisesRegex(frappe.ValidationError, "Submit or delete the draft visits"):
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "settle only after End Day"):
+				frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
+			draft_visit = frappe.get_doc(
+				{"doctype": "Customer Visit", "mobile_trip": in_field.name, "customer": self.customer, "visit_datetime": now_datetime(),
+				 "outcome": "Sale", "sale_items": [{"item_code": self.plain_item, "qty": 1}], "collect_amount": 100}
+			).insert()  # fmt: skip
+			with self.assertRaisesRegex(frappe.ValidationError, "Submit or delete the draft visits"):
+				trip_service.end_day(in_field.name)
+			frappe.delete_doc("Customer Visit", draft_visit.name)  # agents may delete their own drafts
 			trip_service.end_day(in_field.name)
-		draft_visit.delete()
-		trip_service.end_day(in_field.name)
 
 		first = self.draft(in_field, returned={self.plain_item: 5})
-		with self.assertRaisesRegex(frappe.ValidationError, "already has settlement"):
-			frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
-		self.assertEqual(settlement.make_settlement(in_field.name), first.name)
+		with as_user(self.users.store):
+			with self.assertRaisesRegex(frappe.ValidationError, "already has settlement"):
+				frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
+			self.assertEqual(settlement.make_settlement(in_field.name), first.name)
 
 		frappe.db.set_value("Mobile Trip", in_field.name, "status", "In Field")
 		with self.assertRaisesRegex(frappe.ValidationError, "already has settlement"):
@@ -362,7 +361,7 @@ class TestMobileSettlement(MobileSalesTestCase):
 			 "mobile_purpose": "Return", "items": [{"item_code": self.plain_item, "qty": 1, "s_warehouse": trip.van_warehouse, "t_warehouse": self.store}]}
 		)  # fmt: skip
 		se.flags[guards.INTERNAL_FLAG] = True
-		with self.assertRaisesRegex(frappe.ValidationError, "created only by Mobile Settlement"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "created only by Mobile Settlement"):
 			se.insert()
 
 	# 13
@@ -379,18 +378,11 @@ class TestMobileSettlement(MobileSalesTestCase):
 
 	def test_real_roles_post_batch_documents(self):
 		"""Store keeper loads, agent sells, cashier submits: each creates Serial and Batch Bundles."""
-		frappe.set_user(STORE_KEEPER)
-		trip = frappe.get_doc(
-			{"doctype": "Mobile Trip", "agent": self.agent_a.name, "trip_date": nowdate(), "load_items": [{"item_code": self.batch_item, "qty": 6}]}
-		).insert()
-		trip.submit()
-		frappe.set_user(self.agent_a.user)
-		trip_service.start_trip(trip.name)
-		visit = self.sell(trip.name, [(self.batch_item, 2)])
-		self.assertEqual(frappe.db.get_value("Sales Invoice", visit.sales_invoice, "owner"), self.agent_a.user)
-		trip_service.end_day(trip.name)
-		frappe.set_user("Administrator")
-		doc = self.approve_flow(self.draft(frappe.get_doc("Mobile Trip", trip.name), returned={self.batch_item: 4}).name)
+		trip = self.run_trip([(self.batch_item, 6)], sales=[[(self.batch_item, 2)]])
+		self.assertEqual(frappe.db.get_value("Mobile Trip", trip.name, "owner"), STORE_KEEPER)
+		invoice = frappe.db.get_value("Sales Invoice", {"mobile_trip": trip.name}, ["name", "owner"], as_dict=True)
+		self.assertEqual(invoice.owner, self.agent_a.user)
+		doc = self.approve_flow(self.draft(trip, returned={self.batch_item: 4}).name)
 		self.assertEqual(doc.docstatus, 1)
 		self.assertEqual(frappe.db.get_value("Stock Entry", doc.return_entry, "owner"), CASHIER)
 

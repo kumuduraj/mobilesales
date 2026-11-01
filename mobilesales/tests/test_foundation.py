@@ -14,6 +14,7 @@ from frappe.utils.nestedset import get_root_of
 
 from mobilesales.overrides import guards, permissions
 from mobilesales.services import agent_setup
+from mobilesales.tests.utils import ROLE_USERS, as_user, make_role_users
 
 PREFIX = "_MS Test"
 TEST_USER = "ms.test.agent@example.com"
@@ -89,6 +90,7 @@ class TestFoundation(IntegrationTestCase):
 	def setUpClass(cls):
 		super().setUpClass()
 		cls.counts_before = _counts()
+		cls.users = make_role_users()
 
 		cls.company = _company()
 		root_wh = frappe.db.get_value(
@@ -183,14 +185,16 @@ class TestFoundation(IntegrationTestCase):
 			.insert()
 			.name
 		)
-		cls.setup_result = agent_setup.setup_agent(cls.agent)
+		with as_user(cls.users.supervisor):
+			cls.setup_result = agent_setup.setup_agent(cls.agent)
 
 	@classmethod
 	def tearDownClass(cls):
 		for p in cls._patches:
 			p.stop()
 		frappe.db.rollback()
-		frappe.clear_cache(user=TEST_USER)
+		for user in (TEST_USER, *(email for email, _roles in ROLE_USERS.values())):
+			frappe.clear_cache(user=user)
 		counts_after = _counts()
 		super().tearDownClass()
 		if counts_after != cls.counts_before:
@@ -238,18 +242,19 @@ class TestFoundation(IntegrationTestCase):
 
 	# 1
 	def test_standard_sales_invoice_unaffected(self):
-		si = self._sales_invoice(self.store)
-		si.insert()
-		si.submit()
-		self.assertEqual(si.docstatus, 1)
-		self.assertFalse(si.get("mobile_trip"))
-		self.assertFalse(cint(si.get("is_mobile_sale")))
-		si.cancel()
+		with as_user(self.users.office):
+			si = self._sales_invoice(self.store)
+			si.insert()
+			si.submit()
+			self.assertEqual(si.docstatus, 1)
+			self.assertFalse(si.get("mobile_trip"))
+			self.assertFalse(cint(si.get("is_mobile_sale")))
+			si.cancel()
 		self.assertEqual(si.docstatus, 2)
 
 	# 2
 	def test_sales_invoice_on_van_without_trip_blocked(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
 			self._sales_invoice(self.van).insert()
 
 	def test_delivery_note_on_van_blocked(self):
@@ -261,19 +266,20 @@ class TestFoundation(IntegrationTestCase):
 				"items": [{"item_code": self.item, "qty": 1, "rate": 100, "warehouse": self.van}],
 			}
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
 			dn.insert()
 
 	# 3
 	def test_stock_entry_into_van_without_trip_blocked(self):
-		with self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "Van warehouse"):
 			self._transfer(self.van).insert()
 
 	# 4
 	def test_stock_entry_not_touching_vans_passes(self):
-		se = self._transfer(self.other_store)
-		se.insert()
-		se.submit()
+		with as_user(self.users.office):
+			se = self._transfer(self.other_store)
+			se.insert()
+			se.submit()
 		self.assertEqual(se.docstatus, 1)
 
 	# 5
@@ -294,7 +300,7 @@ class TestFoundation(IntegrationTestCase):
 				"target_exchange_rate": 1,
 			}
 		)
-		with self.assertRaisesRegex(frappe.ValidationError, "Agent cash account"):
+		with as_user(self.users.office), self.assertRaisesRegex(frappe.ValidationError, "Agent cash account"):
 			pe.insert()
 
 	# 6
@@ -316,7 +322,8 @@ class TestFoundation(IntegrationTestCase):
 		self.assertIn("Mobile Sales Agent", frappe.get_roles(TEST_USER))
 
 		counts = _counts()
-		second = agent_setup.setup_agent(self.agent)
+		with as_user(self.users.supervisor):
+			second = agent_setup.setup_agent(self.agent)
 		self.assertEqual(first, second)
 		self.assertEqual(counts, _counts())
 		self.assertEqual(
@@ -325,6 +332,11 @@ class TestFoundation(IntegrationTestCase):
 			),
 			len(agent_setup.SCOPED_DOCTYPES),
 		)
+
+	def test_setup_agent_needs_supervisor(self):
+		for user in (self.users.office, self.users.store, TEST_USER):
+			with as_user(user), self.assertRaises(frappe.PermissionError):
+				agent_setup.setup_agent(self.agent)
 
 	def test_cash_account_number(self):
 		# The test parent has no numbered children, so the agent ledger is unnumbered.
