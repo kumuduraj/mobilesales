@@ -1,53 +1,83 @@
-"""Access for Mobile Sales Agents on standard DocTypes (spec §6.4).
+"""Access for Mobile Sales roles on standard DocTypes (spec §6.4).
 
 Never shipped as Custom DocPerm fixtures: once any Custom DocPerm exists for a DocType, Frappe ignores
 its standard DocPerms. frappe.permissions.add_permission first copies the standard rules into Custom
-DocPerm (setup_custom_perms -> copy_perms) and then adds the Agent rule, so every existing role keeps
-exactly its rights. Idempotent: the Agent rule is created once and its rights are re-asserted."""
+DocPerm (setup_custom_perms -> copy_perms) and then adds our rule, so every existing role keeps
+exactly its rights. Idempotent: each rule is created once and its rights are re-asserted."""
 
 import frappe
 from frappe.permissions import add_permission, update_permission_property
 
 AGENT_ROLE = "Mobile Sales Agent"
-MANAGED_RIGHTS = ("select", "read", "print", "export", "report", "share", "email")
+STORE_KEEPER_ROLE = "Mobile Sales Store Keeper"
+CASHIER_ROLE = "Mobile Sales Cashier"
+SUPERVISOR_ROLE = "Mobile Sales Supervisor"
+MANAGED_RIGHTS = (
+	"select", "read", "write", "create", "submit", "cancel", "delete", "amend",
+	"print", "export", "report", "share", "email",
+)  # fmt: skip
 
 READ = {"read": 1}
-# DocType -> rights of the Agent rule (every other right in MANAGED_RIGHTS is forced to 0)
-AGENT_PERMISSIONS = {
-	"Customer": READ,
-	"Item": READ,
-	"UOM": READ,
-	"Price List": READ,
-	"Item Price": READ,
-	"Batch": READ,
-	"Contact": READ,
-	"Address": READ,
-	"Territory": READ,
-	"Customer Group": READ,
-	"Sales Invoice": {"read": 1, "print": 1},
-	"Payment Entry": {"read": 1, "print": 1},
+POST_BUNDLES = {"read": 1, "write": 1, "create": 1, "submit": 1}
+# DocType -> {role: rights}; every other right in MANAGED_RIGHTS is forced to 0 for that rule.
+ROLE_PERMISSIONS = {
+	"Customer": {AGENT_ROLE: READ},
+	"Item": {AGENT_ROLE: READ},
+	"UOM": {AGENT_ROLE: READ},
+	"Price List": {AGENT_ROLE: READ},
+	"Item Price": {AGENT_ROLE: READ},
+	"Batch": {AGENT_ROLE: READ},
+	"Contact": {AGENT_ROLE: READ},
+	"Address": {AGENT_ROLE: READ},
+	"Territory": {AGENT_ROLE: READ},
+	"Customer Group": {AGENT_ROLE: READ},
+	"Sales Invoice": {AGENT_ROLE: {"read": 1, "print": 1}},
+	"Payment Entry": {AGENT_ROLE: {"read": 1, "print": 1}},
 	# ERPNext's get_party_account() checks the session user's select/read on the receivable account
 	# while an agent's visit builds its invoice and payment; select only: no reading Account records.
-	"Account": {"select": 1},
+	"Account": {AGENT_ROLE: {"select": 1}},
+	# ERPNext creates Serial and Batch Bundles for batch items without ignore_permissions, as the user
+	# who submits the stock document: agent (sale), store keeper (trip load), cashier / supervisor
+	# (settlement). Standard ERPNext gives the same rights to every operational stock role.
+	"Serial and Batch Bundle": {
+		AGENT_ROLE: POST_BUNDLES,
+		STORE_KEEPER_ROLE: POST_BUNDLES,
+		CASHIER_ROLE: POST_BUNDLES,
+		SUPERVISOR_ROLE: {**POST_BUNDLES, "cancel": 1},
+	},
 }
-AGENT_READ_DOCTYPES = tuple(AGENT_PERMISSIONS)
+AGENT_PERMISSIONS = {doctype: roles[AGENT_ROLE] for doctype, roles in ROLE_PERMISSIONS.items() if AGENT_ROLE in roles}
+AGENT_READ_DOCTYPES = tuple(ROLE_PERMISSIONS)
+
+
+def ensure_agent_permissions():
+	for doctype, roles in ROLE_PERMISSIONS.items():
+		for role, rights in roles.items():
+			rule = {"parent": doctype, "role": role, "permlevel": 0, "if_owner": 0}
+			if not frappe.db.exists("Custom DocPerm", rule):
+				add_permission(doctype, role, 0, next(iter(rights)))
+			for right in MANAGED_RIGHTS:
+				wanted = rights.get(right, 0)
+				if (frappe.db.get_value("Custom DocPerm", rule, right) or 0) != wanted:
+					update_permission_property(doctype, role, 0, right, wanted)
 
 
 def check_standard_permission_drift() -> list[str]:
 	"""After an ERPNext upgrade the standard DocPerms may change, but the Custom DocPerm copies made by
 	add_permission keep the old rules. Report (never fix) every DocType whose copy no longer matches the
-	standard rules for any role other than the Agent. Returns the drifted DocTypes."""
+	standard rules for any role this app does not manage. Returns the drifted DocTypes."""
 	rights = ["permlevel", *(df.fieldname for df in frappe.get_meta("DocPerm").fields if df.fieldtype == "Check")]
 
-	def rules(doctype, source):
-		rows = frappe.get_all(source, filters={"parent": doctype, "role": ["!=", AGENT_ROLE]}, fields=["role", *rights])
-		return {(row.role, row.permlevel, row.if_owner): {r: row.get(r) or 0 for r in rights} for row in rows}
-
 	drifted = []
-	for doctype in AGENT_PERMISSIONS:
+	for doctype, managed in ROLE_PERMISSIONS.items():
 		if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
 			continue
-		standard, custom = rules(doctype, "DocPerm"), rules(doctype, "Custom DocPerm")
+
+		def rules(source):
+			rows = frappe.get_all(source, filters={"parent": doctype, "role": ["not in", list(managed)]}, fields=["role", *rights])
+			return {(row.role, row.permlevel, row.if_owner): {r: row.get(r) or 0 for r in rights} for row in rows}
+
+		standard, custom = rules("DocPerm"), rules("Custom DocPerm")
 		differences = []
 		for key in sorted(set(standard) | set(custom)):
 			if standard.get(key) != custom.get(key):
@@ -64,21 +94,10 @@ def check_standard_permission_drift() -> list[str]:
 		frappe.log_error(
 			title=title,
 			message=title
-			+ "\n\nThe Custom DocPerm copy no longer matches the standard DocPerm (Mobile Sales Agent ignored). "
+			+ "\n\nThe Custom DocPerm copy no longer matches the standard DocPerm (Mobile Sales roles ignored). "
 			"mobilesales did not change anything. Review in Role Permission Manager:\n"
 			+ "\n".join(differences),
 			reference_doctype="DocType",
 			reference_name=doctype,
 		)
 	return drifted
-
-
-def ensure_agent_permissions():
-	for doctype, rights in AGENT_PERMISSIONS.items():
-		rule = {"parent": doctype, "role": AGENT_ROLE, "permlevel": 0, "if_owner": 0}
-		if not frappe.db.exists("Custom DocPerm", rule):
-			add_permission(doctype, AGENT_ROLE, 0, next(iter(rights)))
-		for right in MANAGED_RIGHTS:
-			wanted = rights.get(right, 0)
-			if (frappe.db.get_value("Custom DocPerm", rule, right) or 0) != wanted:
-				update_permission_property(doctype, AGENT_ROLE, 0, right, wanted)

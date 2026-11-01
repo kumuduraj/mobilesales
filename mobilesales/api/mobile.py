@@ -5,10 +5,12 @@ from frappe import _
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
+from mobilesales.services import reconciliation
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
 
 VAN_STOCK_ROLES = ("Mobile Sales Supervisor", "Mobile Sales Store Keeper", "System Manager")
+SETTLEMENT_VIEW_ROLES = (*VAN_STOCK_ROLES, "Mobile Sales Cashier")
 SETTINGS_FLAGS = (
 	"company",
 	"allow_credit_sales",
@@ -92,3 +94,15 @@ def get_van_stock(trip: str) -> list[dict]:
 				if b.get("qty")
 			]
 	return rows
+
+
+@frappe.whitelist()
+def get_settlement_draft(trip: str) -> dict:
+	"""Computed reconciliation for a trip without saving anything."""
+	doc = frappe.get_doc("Mobile Trip", trip)
+	if not (trip_service.is_trip_agent(doc) or set(SETTLEMENT_VIEW_ROLES) & set(frappe.get_roles())):
+		frappe.throw(_("You can only view the settlement of your own trip."), frappe.PermissionError)
+	draft = frappe.new_doc("Mobile Settlement")
+	draft.mobile_trip = trip
+	reconciliation.refresh_settlement(draft)
+	return draft.as_dict(no_default_fields=True)

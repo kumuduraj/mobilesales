@@ -170,6 +170,8 @@ On **submit**: creates Stock Entry (Material Transfer, source → van) from `loa
 | verified_by_store, verified_by_cashier | Link User | set by workflow |
 | return_entry, damage_entry, shortage_entry, cash_journal, variance_journal | Link | read only, created on submit |
 
+Cheques: recorded only; posting deferred until a cheque MoP is enabled for agents.
+
 **Mobile Settlement Item** (one row per item ever loaded on the trip):
 
 | Column | Source |
@@ -324,10 +326,12 @@ Agents get Read only (for reprint) on Sales Invoice / Payment Entry, scoped by `
 | --- | --- | --- | --- |
 | Draft | 0 | Agent | Submit for Verification → Pending Store |
 | Pending Store | 0 | Store Keeper | Verify Stock → Pending Cashier; Reject → Draft |
-| Pending Cashier | 0 | Cashier | Verify Cash → Pending Approval (variance over tolerance) or Approved |
+| Pending Cashier | 0 | Cashier | Verify Cash → Pending Approval (variance over tolerance) or Approved; Reject → Draft |
 | Pending Approval | 0 | Supervisor | Approve → Approved; Reject → Draft |
 | Approved | 1 | Cashier / Supervisor | — (submit posts ledgers) |
 | Cancelled | 2 | Supervisor | — |
+
+Every Reject returns the settlement to Draft and clears Verified by Store / Verified by Cashier. Supervisors may perform every Store Keeper and Cashier transition.
 
 ## 7. Reports and dashboard
 

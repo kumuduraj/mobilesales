@@ -13,6 +13,8 @@ CACHE_KEY = "mobilesales:guard_context"
 SUPERVISOR_ROLE = "Mobile Sales Supervisor"
 EMPTY_CONTEXT = {"van_group": None, "vans": frozenset(), "cash": frozenset()}
 INTERNAL_FLAG = "mobilesales_internal"
+SETTLEMENT_FLAG = "mobilesales_settlement"
+SETTLEMENT_PURPOSES = ("Return", "Damage", "Shortage")
 # Trip statuses in which app code may post each kind of mobile Stock Entry.
 # Issue is posted from Mobile Trip.on_submit: trip already submitted, status still Draft.
 PURPOSE_TRIP_STATUSES = {
@@ -230,6 +232,11 @@ def validate_stock_entry(doc, method=None):
 	allowed = PURPOSE_TRIP_STATUSES.get(doc.get("mobile_purpose"))
 	if not allowed:
 		frappe.throw(_("Mobile Purpose is required on a Stock Entry linked to a Mobile Trip."))
+	if doc.mobile_purpose in SETTLEMENT_PURPOSES and not doc.flags.get(SETTLEMENT_FLAG):
+		frappe.throw(
+			_("{0} Stock Entries are created only by Mobile Settlement.").format(_(doc.mobile_purpose)),
+			title=_("Mobile Sales"),
+		)
 	_require_trip_status(trip, allowed, _("Stock Entry ({0})").format(_(doc.mobile_purpose)))
 	_require_trip_van(trip, vans, "Stock Entry")
 

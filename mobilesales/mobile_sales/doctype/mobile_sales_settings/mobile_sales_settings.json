@@ -21,6 +21,7 @@
   "column_break_acc",
   "stock_shortage_account",
   "cash_shortage_account",
+  "employee_recovery_account",
   "agents_section",
   "sales_person_parent",
   "rules_section",
@@ -134,6 +135,13 @@
    "options": "Account"
   },
   {
+   "fieldname": "employee_recovery_account",
+   "fieldtype": "Link",
+   "label": "Employee Recovery Account",
+   "options": "Account",
+   "description": "Receivable / payable ledger debited (party Employee) when shortages are recovered from the agent"
+  },
+  {
    "fieldname": "agents_section",
    "fieldtype": "Section Break",
    "label": "Agents"
@@ -189,7 +197,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 13:30:00.000000",
+ "modified": "2026-11-01 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",

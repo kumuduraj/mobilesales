@@ -1,0 +1,30 @@
+[
+ {
+  "docstatus": 0,
+  "doctype": "Workflow Action Master",
+  "modified": "2026-11-01 14:00:00",
+  "name": "Submit for Verification",
+  "workflow_action_name": "Submit for Verification"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Workflow Action Master",
+  "modified": "2026-11-01 14:00:00",
+  "name": "Verify Stock",
+  "workflow_action_name": "Verify Stock"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Workflow Action Master",
+  "modified": "2026-11-01 14:00:00",
+  "name": "Verify Cash",
+  "workflow_action_name": "Verify Cash"
+ },
+ {
+  "docstatus": 0,
+  "doctype": "Workflow Action Master",
+  "modified": "2026-11-01 14:00:00",
+  "name": "Cancel",
+  "workflow_action_name": "Cancel"
+ }
+]

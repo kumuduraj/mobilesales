@@ -1,0 +1,409 @@
+"""Phase 4: Mobile Settlement reconciliation, workflow, per-state edit rules, postings, cancel."""
+
+from unittest.mock import patch
+
+import frappe
+from frappe.model.workflow import apply_workflow
+from frappe.utils import add_years, flt, now_datetime, nowdate
+
+from erpnext.stock.doctype.batch.batch import get_batch_qty
+
+from mobilesales.api import mobile as mobile_api
+from mobilesales.overrides import guards
+from mobilesales.services import invoicing, reconciliation, settlement
+from mobilesales.services import trip as trip_service
+from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, leaf, make_receipt, make_warehouse
+
+STORE_KEEPER = "ms.test.store@example.com"
+CASHIER = "ms.test.cashier@example.com"
+SUPERVISOR = "ms.test.supervisor@example.com"
+
+
+class TestMobileSettlement(MobileSalesTestCase):
+	EXTRA_USERS = (STORE_KEEPER, CASHIER, SUPERVISOR)
+
+	@classmethod
+	def setUpClass(cls):
+		super().setUpClass()
+		for user, role in (
+			(STORE_KEEPER, "Mobile Sales Store Keeper"),
+			(CASHIER, "Mobile Sales Cashier"),
+			(SUPERVISOR, "Mobile Sales Supervisor"),
+		):
+			frappe.get_doc(
+				{"doctype": "User", "email": user, "first_name": f"{PREFIX} {role}", "send_welcome_email": 0, "roles": [{"role": role}]}
+			).insert()
+
+		root_wh = frappe.db.get_value("Warehouse", cls.store, "parent_warehouse")
+		cls.damage_wh = make_warehouse(f"{PREFIX} Damaged", root_wh, cls.company)
+		cls.cash_item = cls.make_item(f"{PREFIX} Cash Item")
+		frappe.get_doc({"doctype": "Item Price", "item_code": cls.cash_item, "price_list": cls.price_list, "price_list_rate": 485}).insert()
+		make_receipt(cls.company, cls.plain_item, 200, cls.store)
+		make_receipt(cls.company, cls.cash_item, 100, cls.store, rate=300)
+
+		stock_adjustment = frappe.get_cached_value("Company", cls.company, "stock_adjustment_account")
+		expense_group = frappe.db.get_value("Account", stock_adjustment, "parent_account")
+		cls.cash_shortage = cls.make_account(f"{PREFIX} Cash Shortage", expense_group)
+		payable_group = frappe.db.get_value(
+			"Account", frappe.get_cached_value("Company", cls.company, "default_payable_account"), "parent_account"
+		)
+		cls.recovery_account = cls.make_account(f"{PREFIX} Employee Recovery", payable_group, "Payable")
+		cls.settings.update(
+			{
+				"damage_warehouse": cls.damage_wh,
+				"stock_shortage_account": stock_adjustment,
+				"cash_shortage_account": cls.cash_shortage,
+				"employee_recovery_account": cls.recovery_account,
+				"shortage_tolerance_value": 100000,
+				"recover_shortage_from_agent": 0,
+				"allow_credit_sales": 0,
+			}
+		)
+
+	@classmethod
+	def make_account(cls, name, parent, account_type=None):
+		return frappe.get_doc(
+			{"doctype": "Account", "account_name": name, "parent_account": parent, "company": cls.company, "account_type": account_type}
+		).insert().name
+
+	# helpers
+
+	def set_setting(self, fieldname, value):
+		old = self.settings.get(fieldname)
+		self.settings.set(fieldname, value)
+		self.addCleanup(self.settings.set, fieldname, old)
+
+	def run_trip(self, load, sales=(), opening_cash_float=0, agent=None, end_day=True):
+		agent = agent or self.agent_a
+		trip = frappe.get_doc(
+			{
+				"doctype": "Mobile Trip",
+				"agent": agent.name,
+				"trip_date": nowdate(),
+				"opening_cash_float": opening_cash_float,
+				"load_items": [{"item_code": item, "qty": qty} for item, qty in load],
+			}
+		).insert()
+		trip.submit()
+		trip_service.start_trip(trip.name)
+		for items in sales:
+			self.sell(trip.name, items)
+		if end_day:
+			trip_service.end_day(trip.name)
+		return frappe.get_doc("Mobile Trip", trip.name)
+
+	def sell(self, trip_name, items):
+		visit = frappe.get_doc(
+			{
+				"doctype": "Customer Visit",
+				"mobile_trip": trip_name,
+				"customer": self.customer,
+				"visit_datetime": now_datetime(),
+				"outcome": "Sale",
+				"sale_items": [{"item_code": item, "qty": qty} for item, qty in items],
+			}
+		)
+		visit.collect_amount = invoicing.payable_amount(invoicing.build_invoice(visit))
+		visit.insert()
+		visit.submit()
+		return visit
+
+	def draft(self, trip, returned=None, damaged=None, damaged_batch=None, handed=None, agent=None):
+		frappe.set_user((agent or self.agent_a).user)
+		name = settlement.make_settlement(trip.name)
+		doc = frappe.get_doc("Mobile Settlement", name)
+		for row in doc.stock_lines:
+			row.returned_qty = (returned or {}).get(row.item_code, 0)
+			row.damaged_qty = (damaged or {}).get(row.item_code, 0)
+			row.damaged_batch_no = (damaged_batch or {}).get(row.item_code)
+		doc.cash_handed_over = doc.expected_cash if handed is None else handed
+		doc.save()
+		frappe.set_user("Administrator")
+		return doc
+
+	def act(self, name, action, user):
+		frappe.set_user(user)
+		try:
+			apply_workflow(frappe.get_doc("Mobile Settlement", name), action)
+		finally:
+			frappe.set_user("Administrator")
+		return frappe.get_doc("Mobile Settlement", name)
+
+	def approve_flow(self, name):
+		self.act(name, "Submit for Verification", self.agent_a.user)
+		self.act(name, "Verify Stock", STORE_KEEPER)
+		return self.act(name, "Verify Cash", CASHIER)
+
+	def van_qty(self, item_code, agent=None):
+		van = (agent or self.agent_a).van_warehouse
+		return flt(frappe.db.get_value("Bin", {"warehouse": van, "item_code": item_code}, "actual_qty"))
+
+	def se_rows(self, name):
+		return sorted((r.item_code, flt(r.qty), r.batch_no or None) for r in frappe.get_doc("Stock Entry", name).items)
+
+	def je_lines(self, name):
+		return {(r.account, flt(r.debit), flt(r.credit), r.party or None) for r in frappe.get_doc("Journal Entry", name).accounts}
+
+	# 1  SPEC §8.3
+	def test_issued_sold_returned_damaged_missing(self):
+		trip = self.run_trip(
+			[(self.plain_item, 100), (self.batch_item, 7)],
+			sales=[[(self.plain_item, 70), (self.batch_item, 3)]],  # batch sale takes A first: van A 2, B 2
+		)
+		doc = self.draft(trip, returned={self.plain_item: 25, self.batch_item: 4}, damaged={self.plain_item: 3})
+		line = next(r for r in doc.stock_lines if r.item_code == self.plain_item)
+		self.assertEqual((line.issued_qty, line.sold_qty, line.expected_balance, line.missing_qty), (100, 70, 30, 2))
+		self.assertEqual(doc.stock_variance_value, 2 * line.valuation_rate)
+
+		doc = self.approve_flow(doc.name)
+		self.assertEqual((doc.docstatus, doc.workflow_state), (1, "Approved"))
+		self.assertEqual(self.se_rows(doc.return_entry), sorted([(self.plain_item, 25, None), (self.batch_item, 2, self.batch_a), (self.batch_item, 2, self.batch_b)]))
+		self.assertEqual(self.se_rows(doc.damage_entry), [(self.plain_item, 3, None)])
+		self.assertEqual(self.se_rows(doc.shortage_entry), [(self.plain_item, 2, None)])
+		self.assertEqual(
+			{frappe.db.get_value("Stock Entry", n, "mobile_purpose") for n in (doc.return_entry, doc.damage_entry, doc.shortage_entry)},
+			{"Return", "Damage", "Shortage"},
+		)
+		self.assertEqual(self.van_qty(self.plain_item), 0)
+		self.assertEqual(self.van_qty(self.batch_item), 0)
+		self.assertFalse([b for b in get_batch_qty(warehouse=self.agent_a.van_warehouse, item_code=self.batch_item) if flt(b.get("qty"))])
+		trip.reload()
+		self.assertEqual((trip.status, trip.settlement), ("Settled", doc.name))
+		self.assertEqual([r.purpose for r in trip.stock_entries], ["Issue", "Return", "Damage", "Shortage"])
+		self.assertIn(doc.name, frappe.get_print("Mobile Settlement", doc.name, print_format="Mobile Settlement Sheet"))
+
+	# 2
+	def test_cash_shortage_posts_variance_journal(self):
+		trip = self.run_trip([(self.cash_item, 100)], sales=[[(self.cash_item, 100)]], opening_cash_float=2000)
+		doc = self.draft(trip, handed=50000)
+		self.assertEqual((doc.opening_cash_float, doc.expected_cash, doc.cash_variance), (2000, 50500, -500))
+		self.assertEqual((doc.collected_current, doc.cash_sales_amount), (48500, 48500))
+		doc = self.approve_flow(doc.name)
+		self.assertEqual(self.je_lines(doc.cash_journal), {(self.main_cash, 50000, 0, None), (self.agent_a.cash_account, 0, 50000, None)})
+		self.assertEqual(self.je_lines(doc.variance_journal), {(self.cash_shortage, 500, 0, None), (self.agent_a.cash_account, 0, 500, None)})
+		self.assertEqual(reconciliation.get_agent_cash_balance(self.agent_a.cash_account), 0)
+
+	# 3
+	def test_cash_excess_posts_reversed_journal(self):
+		trip = self.run_trip([(self.plain_item, 1)], sales=[[(self.plain_item, 1)]])
+		doc = self.approve_flow(self.draft(trip, handed=150).name)
+		self.assertEqual(doc.cash_variance, 50)
+		self.assertEqual(self.je_lines(doc.variance_journal), {(self.agent_a.cash_account, 50, 0, None), (self.cash_shortage, 0, 50, None)})
+		self.assertEqual(reconciliation.get_agent_cash_balance(self.agent_a.cash_account), 0)
+
+	# 4
+	def test_over_tolerance_needs_supervisor(self):
+		self.set_setting("shortage_tolerance_value", 0)
+		trip = self.run_trip([(self.plain_item, 1)], sales=[[(self.plain_item, 1)]])
+		doc = self.draft(trip, handed=90)
+		self.assertTrue(doc.needs_approval)
+		doc = self.approve_flow(doc.name)
+		self.assertEqual((doc.docstatus, doc.workflow_state), (0, "Pending Approval"))
+
+		frappe.set_user(CASHIER)
+		with self.assertRaises(frappe.ValidationError):
+			frappe.get_doc("Mobile Settlement", doc.name).submit()
+		frappe.set_user("Administrator")
+		with self.assertRaises(frappe.ValidationError):
+			self.act(doc.name, "Approve", CASHIER)
+
+		doc = self.act(doc.name, "Approve", SUPERVISOR)
+		self.assertEqual((doc.docstatus, doc.workflow_state), (1, "Approved"))
+
+	# 5
+	def test_within_tolerance_submits_on_verify_cash(self):
+		self.set_setting("shortage_tolerance_value", 100)
+		trip = self.run_trip([(self.plain_item, 1)], sales=[[(self.plain_item, 1)]])
+		doc = self.approve_flow(self.draft(trip, handed=90).name)
+		self.assertFalse(doc.needs_approval)
+		self.assertEqual((doc.docstatus, doc.workflow_state, doc.verified_by_store, doc.verified_by_cashier), (1, "Approved", STORE_KEEPER, CASHIER))
+
+	# 6
+	def test_field_rules_per_state(self):
+		trip = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]])
+		doc = self.draft(trip, returned={self.plain_item: 3})
+		self.act(doc.name, "Submit for Verification", self.agent_a.user)
+
+		def edit(user, change):
+			frappe.set_user(user)
+			try:
+				target = frappe.get_doc("Mobile Settlement", doc.name)
+				change(target)
+				target.save()
+			finally:
+				frappe.set_user("Administrator")
+
+		def set_returned(qty):
+			return lambda d: setattr(d.stock_lines[0], "returned_qty", qty)
+
+		def set_cash(amount):
+			return lambda d: setattr(d, "cash_handed_over", amount)
+
+		with self.assertRaisesRegex(frappe.PermissionError, "cannot change"):
+			edit(self.agent_a.user, set_returned(2))
+		with self.assertRaisesRegex(frappe.PermissionError, "cannot change"):
+			edit(STORE_KEEPER, set_cash(1))
+		edit(STORE_KEEPER, set_returned(2))
+
+		self.act(doc.name, "Verify Stock", STORE_KEEPER)
+		with self.assertRaisesRegex(frappe.PermissionError, "cannot change"):
+			edit(CASHIER, set_returned(3))
+		edit(CASHIER, set_cash(150))
+		doc.reload()
+		self.assertEqual((doc.stock_lines[0].returned_qty, doc.cash_handed_over, doc.verified_by_store), (2, 150, STORE_KEEPER))
+
+	# 7
+	def test_excess_stock_blocks_submit(self):
+		trip = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]])
+		doc = self.draft(trip, returned={self.plain_item: 4})
+		self.assertEqual(doc.stock_lines[0].excess_qty, 1)
+		self.act(doc.name, "Submit for Verification", self.agent_a.user)
+		self.act(doc.name, "Verify Stock", STORE_KEEPER)
+		with self.assertRaisesRegex(frappe.ValidationError, "more than expected"):
+			self.act(doc.name, "Verify Cash", CASHIER)
+
+	# 8
+	def test_bin_ledger_mismatch_blocks_submit(self):
+		trip = self.run_trip([(self.plain_item, 5)])
+		with patch("mobilesales.overrides.guards.get_guard_context", return_value=guards.EMPTY_CONTEXT):
+			make_receipt(self.company, self.plain_item, 1, self.agent_a.van_warehouse)
+		doc = self.draft(trip, returned={self.plain_item: 5})
+		self.act(doc.name, "Submit for Verification", self.agent_a.user)
+		self.act(doc.name, "Verify Stock", STORE_KEEPER)
+		with self.assertRaisesRegex(frappe.ValidationError, "van stock is 6.0 but the trip ledger expects 5.0"):
+			self.act(doc.name, "Verify Cash", CASHIER)
+
+	# 9
+	def test_batches_return_oldest_first_and_named_damage(self):
+		trip = self.run_trip([(self.batch_item, 7)], sales=[[(self.batch_item, 3)]])  # van: A 2, B 2
+		doc = self.draft(trip, returned={self.batch_item: 2}, damaged={self.batch_item: 1}, damaged_batch={self.batch_item: self.batch_b})
+		self.assertEqual(
+			{(r.batch_no, r.expected, r.returned, r.damaged, r.missing) for r in doc.batch_lines},
+			{(self.batch_a, 2, 2, 0, 0), (self.batch_b, 2, 0, 1, 1)},
+		)
+		doc = self.approve_flow(doc.name)
+		self.assertEqual(self.se_rows(doc.return_entry), [(self.batch_item, 2, self.batch_a)])
+		self.assertEqual(self.se_rows(doc.damage_entry), [(self.batch_item, 1, self.batch_b)])
+		self.assertEqual(self.se_rows(doc.shortage_entry), [(self.batch_item, 1, self.batch_b)])
+
+	# 10
+	def test_recover_shortages_from_agent(self):
+		employee = frappe.get_doc(
+			{
+				"doctype": "Employee",
+				"first_name": f"{PREFIX} Employee",
+				"gender": frappe.db.get_value("Gender", {}),
+				"date_of_birth": add_years(nowdate(), -30),
+				"date_of_joining": add_years(nowdate(), -1),
+				"company": self.company,
+				"status": "Active",
+			}
+		).insert().name
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "employee", employee)
+		self.set_setting("recover_shortage_from_agent", 1)
+
+		trip = self.run_trip([(self.plain_item, 10)], sales=[[(self.plain_item, 5)]])
+		doc = self.draft(trip, returned={self.plain_item: 3}, handed=450)
+		self.assertEqual(doc.variance_action, "Recover from Agent")
+		doc = self.approve_flow(doc.name)
+		value = flt(frappe.db.get_value("Stock Entry", doc.shortage_entry, "total_outgoing_value"), 2)
+		self.assertEqual(self.je_lines(doc.recovery_journal), {(self.recovery_account, value, 0, employee), (self.settings.stock_shortage_account, 0, value, None)})
+		self.assertEqual(self.je_lines(doc.variance_journal), {(self.recovery_account, 50, 0, employee), (self.agent_a.cash_account, 0, 50, None)})
+
+	# 11
+	def test_cancel_reverses_and_allows_resettle(self):
+		trip = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]], opening_cash_float=100)
+		doc = self.approve_flow(self.draft(trip, returned={self.plain_item: 2}, handed=250).name)
+		postings = [doc.get(f) for f in ("return_entry", "shortage_entry", "cash_journal", "variance_journal")]
+		self.assertTrue(all(postings))
+
+		doc = self.act(doc.name, "Cancel", SUPERVISOR)
+		self.assertEqual((doc.docstatus, doc.workflow_state), (2, "Cancelled"))
+		for name in postings:
+			doctype = "Stock Entry" if frappe.db.exists("Stock Entry", name) else "Journal Entry"
+			self.assertEqual(frappe.db.get_value(doctype, name, "docstatus"), 2, name)
+		trip.reload()
+		self.assertEqual((trip.status, trip.settlement), ("Settling", None))
+		self.assertEqual([r.purpose for r in trip.stock_entries], ["Issue"])
+		self.assertEqual(self.van_qty(self.plain_item), 3)
+
+		again = self.approve_flow(self.draft(trip, returned={self.plain_item: 3}).name)
+		self.assertNotEqual(again.name, doc.name)
+		self.assertEqual(again.docstatus, 1)
+
+	# 12
+	def test_lifecycle_rules(self):
+		in_field = self.run_trip([(self.plain_item, 5)], end_day=False)
+		with self.assertRaisesRegex(frappe.ValidationError, "settle only after End Day"):
+			frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
+
+		draft_visit = frappe.get_doc(
+			{"doctype": "Customer Visit", "mobile_trip": in_field.name, "customer": self.customer, "visit_datetime": now_datetime(),
+			 "outcome": "Sale", "sale_items": [{"item_code": self.plain_item, "qty": 1}], "collect_amount": 100}
+		).insert()  # fmt: skip
+		with self.assertRaisesRegex(frappe.ValidationError, "Submit or delete the draft visits"):
+			trip_service.end_day(in_field.name)
+		draft_visit.delete()
+		trip_service.end_day(in_field.name)
+
+		first = self.draft(in_field, returned={self.plain_item: 5})
+		with self.assertRaisesRegex(frappe.ValidationError, "already has settlement"):
+			frappe.get_doc({"doctype": "Mobile Settlement", "mobile_trip": in_field.name}).insert()
+		self.assertEqual(settlement.make_settlement(in_field.name), first.name)
+
+		frappe.db.set_value("Mobile Trip", in_field.name, "status", "In Field")
+		with self.assertRaisesRegex(frappe.ValidationError, "already has settlement"):
+			self.sell(in_field.name, [(self.plain_item, 1)])
+
+	def test_manual_settlement_stock_entry_rejected(self):
+		trip = self.run_trip([(self.plain_item, 5)])
+		se = frappe.get_doc(
+			{"doctype": "Stock Entry", "stock_entry_type": "Material Transfer", "company": self.company, "mobile_trip": trip.name,
+			 "mobile_purpose": "Return", "items": [{"item_code": self.plain_item, "qty": 1, "s_warehouse": trip.van_warehouse, "t_warehouse": self.store}]}
+		)  # fmt: skip
+		se.flags[guards.INTERNAL_FLAG] = True
+		with self.assertRaisesRegex(frappe.ValidationError, "created only by Mobile Settlement"):
+			se.insert()
+
+	# 13
+	def test_agent_cannot_see_other_agents_settlement(self):
+		own = self.draft(self.run_trip([(self.plain_item, 2)]), returned={self.plain_item: 2})
+		other = self.draft(self.run_trip([(self.plain_item, 2)], agent=self.agent_b), returned={self.plain_item: 2}, agent=self.agent_b)
+
+		frappe.set_user(self.agent_a.user)
+		self.assertEqual(frappe.get_list("Mobile Settlement", pluck="name"), [own.name])
+		self.assertFalse(frappe.has_permission("Mobile Settlement", "read", doc=other.name))
+		with self.assertRaises(frappe.PermissionError):
+			mobile_api.get_settlement_draft(other.mobile_trip)
+		self.assertEqual(mobile_api.get_settlement_draft(own.mobile_trip)["expected_cash"], 0)
+
+	def test_real_roles_post_batch_documents(self):
+		"""Store keeper loads, agent sells, cashier submits: each creates Serial and Batch Bundles."""
+		frappe.set_user(STORE_KEEPER)
+		trip = frappe.get_doc(
+			{"doctype": "Mobile Trip", "agent": self.agent_a.name, "trip_date": nowdate(), "load_items": [{"item_code": self.batch_item, "qty": 6}]}
+		).insert()
+		trip.submit()
+		frappe.set_user(self.agent_a.user)
+		trip_service.start_trip(trip.name)
+		visit = self.sell(trip.name, [(self.batch_item, 2)])
+		self.assertEqual(frappe.db.get_value("Sales Invoice", visit.sales_invoice, "owner"), self.agent_a.user)
+		trip_service.end_day(trip.name)
+		frappe.set_user("Administrator")
+		doc = self.approve_flow(self.draft(frappe.get_doc("Mobile Trip", trip.name), returned={self.batch_item: 4}).name)
+		self.assertEqual(doc.docstatus, 1)
+		self.assertEqual(frappe.db.get_value("Stock Entry", doc.return_entry, "owner"), CASHIER)
+
+	def test_reject_from_pending_cashier_clears_verifiers(self):
+		trip = self.run_trip([(self.plain_item, 2)])
+		doc = self.draft(trip, returned={self.plain_item: 2})
+		self.act(doc.name, "Submit for Verification", self.agent_a.user)
+		doc = self.act(doc.name, "Verify Stock", STORE_KEEPER)
+		self.assertEqual((doc.workflow_state, doc.verified_by_store), ("Pending Cashier", STORE_KEEPER))
+
+		doc = self.act(doc.name, "Reject", CASHIER)
+		self.assertEqual((doc.workflow_state, doc.docstatus), ("Draft", 0))
+		self.assertFalse(doc.verified_by_store or doc.verified_by_cashier)
+
+		doc = self.approve_flow(doc.name)  # recounted and verified again from Draft
+		self.assertEqual((doc.docstatus, doc.verified_by_store, doc.verified_by_cashier), (1, STORE_KEEPER, CASHIER))
