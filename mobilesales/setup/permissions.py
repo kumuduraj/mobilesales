@@ -31,8 +31,9 @@ ROLE_PERMISSIONS = {
 	"Address": {AGENT_ROLE: READ},
 	"Territory": {AGENT_ROLE: READ},
 	"Customer Group": {AGENT_ROLE: READ},
-	"Sales Invoice": {AGENT_ROLE: {"read": 1, "print": 1}},
-	"Payment Entry": {AGENT_ROLE: {"read": 1, "print": 1}},
+	# Agents: own trips only (permission hooks). Supervisors: visit cancel re-reads the invoices.
+	"Sales Invoice": {AGENT_ROLE: {"read": 1, "print": 1}, SUPERVISOR_ROLE: {"read": 1, "print": 1}},
+	"Payment Entry": {AGENT_ROLE: {"read": 1, "print": 1}, SUPERVISOR_ROLE: {"read": 1, "print": 1}},
 	# ERPNext's get_party_account() checks the session user's select/read on the receivable account
 	# while an agent's visit builds its invoice and payment; select only: no reading Account records.
 	"Account": {AGENT_ROLE: {"select": 1}},
