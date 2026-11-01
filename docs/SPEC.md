@@ -436,4 +436,3 @@ mobile_sales/
 - Customer sales returns needed in phase 1?
 - Agent shortages: always recover from salary, or write off below tolerance?
 - Is a vehicle/driver separate from the agent (one van, two people)?
-# Spec pending upload
