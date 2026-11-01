@@ -62,6 +62,10 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
       and it must print nothing.
    d. Never use sudo/supervisorctl for restarts — ask Raj.
    e. Never touch files outside apps/mobilesales, sites/agrosys.evonet.lk and sites/mstest.local.
+17. Host pages and APIs must be tested as logged-in users of every relevant role, not only as guest.
+    For www pages that means the full render (frappe.website.serve.get_response: context AND template),
+    not just get_context(); the v0.5.0 host page passed its get_context test but returned 500 for a
+    logged-in agent with an open trip (tojson cannot encode dates).
 
 ## Definition of done for EVERY task
 1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.
