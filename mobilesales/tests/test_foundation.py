@@ -205,6 +205,13 @@ class TestFoundation(IntegrationTestCase):
 			}
 			raise AssertionError(f"Test records left behind (before, after): {diff}")
 
+	def setUp(self):
+		super().setUp()
+		# Nothing inside a test may commit: a commit would write test data to the live site.
+		guard = patch.object(frappe.db, "commit", side_effect=AssertionError("frappe.db.commit() inside a test"))
+		guard.start()
+		self.addCleanup(guard.stop)
+
 	# helpers
 
 	def _sales_invoice(self, warehouse):

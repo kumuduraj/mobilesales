@@ -69,12 +69,14 @@ def make_role_users() -> frappe._dict:
 
 @contextmanager
 def as_user(user):
-	"""Run a business flow as a real role user; always back to Administrator (test setup) after."""
+	"""Run a business flow as a real role user; back to the previous user after (nested blocks must not
+	fall back to Administrator mid-flow)."""
+	previous = frappe.session.user
 	frappe.set_user(user)
 	try:
 		yield
 	finally:
-		frappe.set_user("Administrator")
+		frappe.set_user(previous)
 
 
 def counts():
@@ -270,6 +272,10 @@ class MobileSalesTestCase(IntegrationTestCase):
 		frappe.set_user("Administrator")
 		frappe.db.savepoint("ms_test")
 		self.addCleanup(self._restore)
+		# Nothing inside a test may commit: a commit would write test data to the live site.
+		guard = patch.object(frappe.db, "commit", side_effect=AssertionError("frappe.db.commit() inside a test"))
+		guard.start()
+		self.addCleanup(guard.stop)
 
 	def _restore(self):
 		frappe.set_user("Administrator")
