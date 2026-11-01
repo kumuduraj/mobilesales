@@ -31,6 +31,13 @@ def validate_visit(visit):
 			),
 			title=_("Trip not in field"),
 		)
+	settlement = frappe.db.get_value("Mobile Settlement", {"mobile_trip": trip.name, "docstatus": ["<", 2]}, "name")
+	if settlement:
+		frappe.throw(
+			_("Mobile Trip {0} already has settlement {1}; no more visits.").format(
+				frappe.bold(trip.name), frappe.bold(settlement)
+			)
+		)
 	require_agent_or_supervisor(agent)
 	if getdate(visit.visit_datetime) != getdate(trip.trip_date):
 		frappe.throw(_("Visit date must be the trip date {0}.").format(frappe.format(trip.trip_date, "Date")))

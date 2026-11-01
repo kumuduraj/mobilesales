@@ -186,6 +186,12 @@ def end_day(trip: str) -> str:
 	doc = _lock(trip)
 	_require_agent_or_roles(doc, SUPERVISOR_ROLES)
 	_require_status(doc, ("In Field",))
+	drafts = frappe.get_all("Customer Visit", filters={"mobile_trip": doc.name, "docstatus": 0}, pluck="name")
+	if drafts:
+		frappe.throw(
+			_("Submit or delete the draft visits first: {0}").format(", ".join(drafts)),
+			title=_("Draft visits open"),
+		)
 	doc.db_set("status", "Settling")
 	return doc.status
 
