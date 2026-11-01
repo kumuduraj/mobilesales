@@ -35,3 +35,20 @@ def agent_has_permission(doc, ptype: str | None = None, user: str | None = None)
 	if not is_restricted_agent(user):
 		return True
 	return doc.user == user
+
+
+def trip_query_conditions(user: str | None = None) -> str:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return ""
+	return (
+		"`tabMobile Trip`.`agent` in "
+		f"(select `name` from `tabMobile Sales Agent` where `user` = {frappe.db.escape(user)})"
+	)
+
+
+def trip_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return True
+	return bool(doc.agent) and frappe.db.get_value("Mobile Sales Agent", doc.agent, "user") == user

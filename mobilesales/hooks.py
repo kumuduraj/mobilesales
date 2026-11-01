@@ -181,10 +181,12 @@ fixtures = [
 
 permission_query_conditions = {
 	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_query_conditions",
+	"Mobile Trip": "mobilesales.overrides.permissions.trip_query_conditions",
 }
 
 has_permission = {
 	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_has_permission",
+	"Mobile Trip": "mobilesales.overrides.permissions.trip_has_permission",
 }
 
 # Document Events
