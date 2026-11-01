@@ -1,3 +1,27 @@
+## v0.4.0 — Phase 4: End-of-day Settlement
+
+- Mobile Settlement (MSET-.YY.-.#####, one per trip, only when the trip is Settling) with stock lines,
+  batch drill-down, LKR cash denominations and a cheques table (recorded only, not posted yet).
+- Reconciliation from the ledgers: issued / sold from the van's Stock Ledger for the trip's own
+  vouchers, expected cash = opening float + cash Payment Entries on the agent cash account (GL);
+  recomputed on every save. Van Bin vs ledger mismatch and excess counts block submit.
+- Workflow "Mobile Settlement Approval": Draft → Pending Store → Pending Cashier → Approved, or
+  Pending Approval (Supervisor) when |cash variance| + stock variance value exceeds the tolerance;
+  Reject back to Draft from every pending state (clears the verifications); Cancel by Supervisor.
+  Each state allows only its own fields (stock counts at the store, cash at the cashier).
+- Submit postings in one transaction: Return / Damage / Shortage Stock Entries (batches allocated
+  oldest first, named damaged batch honoured), cash hand-over and variance Journal Entries, optional
+  recovery from the agent's Employee record; van and agent cash must end at zero. Cancel reverses
+  everything and returns the trip to Settling.
+- Guards: settlement-only Return / Damage / Shortage entries; no visits once a settlement exists;
+  End Day requires every visit submitted.
+- Print format: Mobile Settlement Sheet (A4) with signature lines.
+- Fix: v0.3.0 could not sell batch items as an agent (nor load them as a store keeper): ERPNext creates
+  Serial and Batch Bundles as the submitting user. The four Mobile Sales roles now have the bundle
+  rights ERPNext gives its own stock roles (14 DocTypes with Custom DocPerm copies, drift-checked).
+- Fix: agents who also hold Accounts / Sales roles keep the standard invoice, payment and visit scope.
+- Tests: 66.
+
 ## v0.3.0 — Phase 3: Customer Visit, invoicing, collection
 
 - Customer Visit (CV-.YY.-.######) with outcomes Sale / No Sale / Collection Only / Shop Closed and
