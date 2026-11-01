@@ -1,0 +1,66 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 12:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "customer",
+  "customer_name",
+  "sequence",
+  "visit_frequency",
+  "visit_day"
+ ],
+ "fields": [
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "label": "Customer Name",
+   "fetch_from": "customer.customer_name",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "sequence",
+   "fieldtype": "Int",
+   "label": "Sequence",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "visit_frequency",
+   "fieldtype": "Select",
+   "label": "Visit Frequency",
+   "options": "Daily\nWeekly\nFortnightly",
+   "default": "Weekly",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "visit_day",
+   "fieldtype": "Select",
+   "label": "Visit Day",
+   "options": "\nMonday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "in_list_view": 1
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-11-01 12:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "name": "Mobile Route Customer",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

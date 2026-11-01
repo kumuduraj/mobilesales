@@ -89,6 +89,28 @@ required_apps = ["erpnext"]
 after_install = "mobilesales.setup.install.after_install"
 after_migrate = ["mobilesales.setup.install.after_migrate"]
 
+# Fixtures
+# --------
+# Explicit by name: never export records this app does not own.
+
+fixtures = [
+	{
+		"dt": "Role",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Mobile Sales Agent",
+					"Mobile Sales Store Keeper",
+					"Mobile Sales Cashier",
+					"Mobile Sales Supervisor",
+				],
+			]
+		],
+	},
+]
+
 # Uninstallation
 # ------------
 

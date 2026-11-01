@@ -1,0 +1,233 @@
+{
+ "actions": [],
+ "creation": "2026-11-01 12:30:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "selling_price_list",
+  "column_break_general",
+  "sinv_naming_series",
+  "default_tax_template",
+  "warehouses_section",
+  "source_warehouse",
+  "return_warehouse",
+  "column_break_wh",
+  "damage_warehouse",
+  "van_warehouse_group",
+  "accounts_section",
+  "agent_cash_parent_account",
+  "main_cash_account",
+  "column_break_acc",
+  "stock_shortage_account",
+  "cash_shortage_account",
+  "agents_section",
+  "sales_person_parent",
+  "rules_section",
+  "recover_shortage_from_agent",
+  "shortage_tolerance_value",
+  "allow_credit_sales",
+  "column_break_rules",
+  "apply_customer_updates_directly",
+  "require_geolocation"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "selling_price_list",
+   "fieldtype": "Link",
+   "label": "Default Selling Price List",
+   "options": "Price List",
+   "description": "Default for new Mobile Sales Agents"
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sinv_naming_series",
+   "fieldtype": "Data",
+   "label": "Mobile Sales Invoice Naming Series",
+   "description": "e.g. MB-SINV-.YY.-.#####"
+  },
+  {
+   "fieldname": "default_tax_template",
+   "fieldtype": "Link",
+   "label": "Default Sales Tax Template",
+   "options": "Sales Taxes and Charges Template"
+  },
+  {
+   "fieldname": "warehouses_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouses"
+  },
+  {
+   "fieldname": "source_warehouse",
+   "fieldtype": "Link",
+   "label": "Source Warehouse",
+   "options": "Warehouse",
+   "description": "Main store that stock is issued from"
+  },
+  {
+   "fieldname": "return_warehouse",
+   "fieldtype": "Link",
+   "label": "Return Warehouse",
+   "options": "Warehouse",
+   "description": "Unsold stock lands here at settlement (default = Source Warehouse)"
+  },
+  {
+   "fieldname": "column_break_wh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "damage_warehouse",
+   "fieldtype": "Link",
+   "label": "Damage Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "van_warehouse_group",
+   "fieldtype": "Link",
+   "label": "Van Warehouse Group",
+   "options": "Warehouse",
+   "description": "Group warehouse; every agent van is created under it"
+  },
+  {
+   "fieldname": "accounts_section",
+   "fieldtype": "Section Break",
+   "label": "Accounts"
+  },
+  {
+   "fieldname": "agent_cash_parent_account",
+   "fieldtype": "Link",
+   "label": "Agent Cash Parent Account",
+   "options": "Account",
+   "description": "Group account (type Cash) that agent cash ledgers are created under"
+  },
+  {
+   "fieldname": "main_cash_account",
+   "fieldtype": "Link",
+   "label": "Main Cash Account",
+   "options": "Account",
+   "description": "Cashier ledger that receives the agent hand-over"
+  },
+  {
+   "fieldname": "column_break_acc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "stock_shortage_account",
+   "fieldtype": "Link",
+   "label": "Stock Shortage Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "cash_shortage_account",
+   "fieldtype": "Link",
+   "label": "Cash Shortage / Excess Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "agents_section",
+   "fieldtype": "Section Break",
+   "label": "Agents"
+  },
+  {
+   "fieldname": "sales_person_parent",
+   "fieldtype": "Link",
+   "label": "Sales Person Parent",
+   "options": "Sales Person",
+   "description": "Group Sales Person that agent Sales Persons are created under"
+  },
+  {
+   "fieldname": "rules_section",
+   "fieldtype": "Section Break",
+   "label": "Rules"
+  },
+  {
+   "fieldname": "recover_shortage_from_agent",
+   "fieldtype": "Check",
+   "label": "Recover Shortage from Agent",
+   "default": "0"
+  },
+  {
+   "fieldname": "shortage_tolerance_value",
+   "fieldtype": "Currency",
+   "label": "Shortage Tolerance Value",
+   "options": "Company:company:default_currency",
+   "default": "0"
+  },
+  {
+   "fieldname": "allow_credit_sales",
+   "fieldtype": "Check",
+   "label": "Allow Credit Sales",
+   "default": "0"
+  },
+  {
+   "fieldname": "column_break_rules",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "apply_customer_updates_directly",
+   "fieldtype": "Check",
+   "label": "Apply Customer Updates Directly",
+   "default": "0"
+  },
+  {
+   "fieldname": "require_geolocation",
+   "fieldtype": "Check",
+   "label": "Require Geolocation",
+   "default": "0"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-11-01 12:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "name": "Mobile Sales Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1
+  },
+  {
+   "role": "Mobile Sales Supervisor",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "print": 1,
+   "email": 1,
+   "share": 1
+  },
+  {
+   "role": "Mobile Sales Store Keeper",
+   "read": 1,
+   "report": 1,
+   "print": 1
+  },
+  {
+   "role": "Mobile Sales Cashier",
+   "read": 1,
+   "report": 1,
+   "print": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
