@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "agent",
+  "mobile_trip",
   "amended_from"
  ],
  "fields": [
@@ -17,6 +18,15 @@
    "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
+  },
+  {
+   "fieldname": "mobile_trip",
+   "fieldtype": "Link",
+   "label": "Mobile Trip",
+   "options": "Mobile Trip",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "amended_from",
@@ -32,7 +42,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-01 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Customer Visit",
