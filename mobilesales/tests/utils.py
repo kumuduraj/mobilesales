@@ -90,6 +90,7 @@ def make_receipt(company, item_code, qty, warehouse, rate=50, batch_no=None, pos
 class MobileSalesTestCase(IntegrationTestCase):
 	SHOW_TRANSACTION_COMMIT_WARNINGS = True
 	AGENT_USERS = ("ms.test.agent.a@example.com", "ms.test.agent.b@example.com")
+	EXTRA_USERS = ()  # other test users whose cached roles / permissions are cleared at the end
 
 	@classmethod
 	def setUpClass(cls):
@@ -213,7 +214,7 @@ class MobileSalesTestCase(IntegrationTestCase):
 			p.stop()
 		frappe.set_user("Administrator")
 		frappe.db.rollback()
-		for user in cls.AGENT_USERS:
+		for user in (*cls.AGENT_USERS, *cls.EXTRA_USERS):
 			frappe.clear_cache(user=user)
 		counts_after = counts()
 		super().tearDownClass()

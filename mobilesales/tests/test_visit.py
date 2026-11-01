@@ -8,9 +8,8 @@ from mobilesales.overrides import guards, permissions
 from mobilesales.services import customer_update, invoicing
 from mobilesales.services import trip as trip_service
 from mobilesales.setup.permissions import (
-	AGENT_PERMISSIONS,
-	AGENT_READ_DOCTYPES,
 	AGENT_ROLE,
+	ROLE_PERMISSIONS,
 	check_standard_permission_drift,
 )
 from mobilesales.tests.utils import PREFIX, MobileSalesTestCase
@@ -373,15 +372,16 @@ class TestCustomerVisit(MobileSalesTestCase):
 
 	# 12
 	def test_permission_integrity_for_existing_roles(self):
-		for doctype in AGENT_READ_DOCTYPES:
+		for doctype, managed in ROLE_PERMISSIONS.items():
 			standard = sorted(tuple(p.get(r) for r in ("role", *RIGHTS)) for p in frappe.get_all("DocPerm", filters={"parent": doctype}, fields=["role", *RIGHTS]))
 			custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=["role", *RIGHTS])
-			kept = sorted(tuple(p.get(r) for r in ("role", *RIGHTS)) for p in custom if p.role != AGENT_ROLE)
+			kept = sorted(tuple(p.get(r) for r in ("role", *RIGHTS)) for p in custom if p.role not in managed)
 			self.assertEqual(kept, standard, doctype)
-			agent_rules = [p for p in custom if p.role == AGENT_ROLE]
-			self.assertEqual(len(agent_rules), 1, doctype)
-			granted = {r for r in RIGHTS[2:] if agent_rules[0].get(r)}
-			self.assertEqual(granted, set(AGENT_PERMISSIONS[doctype]), doctype)
+			for role, rights in managed.items():
+				rules = [p for p in custom if p.role == role]
+				self.assertEqual(len(rules), 1, (doctype, role))
+				granted = {r for r in RIGHTS[2:] if rules[0].get(r)}
+				self.assertEqual(granted, set(rights), (doctype, role))
 
 	def test_permission_drift_is_reported_not_fixed(self):
 		self.assertEqual(check_standard_permission_drift(), [])
