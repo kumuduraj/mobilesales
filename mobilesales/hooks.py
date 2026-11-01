@@ -192,7 +192,10 @@ has_permission = {
 # Hook on document methods and events
 
 doc_events = {
-	"Sales Invoice": {"validate": "mobilesales.overrides.guards.validate_sales_invoice"},
+	"Sales Invoice": {
+		"validate": "mobilesales.overrides.guards.validate_sales_invoice",
+		"before_cancel": "mobilesales.overrides.guards.before_cancel_sales_invoice",
+	},
 	"Delivery Note": {"validate": "mobilesales.overrides.guards.validate_delivery_note"},
 	"Stock Reconciliation": {"validate": "mobilesales.overrides.guards.validate_stock_reconciliation"},
 	"Stock Entry": {"validate": "mobilesales.overrides.guards.validate_stock_entry"},
