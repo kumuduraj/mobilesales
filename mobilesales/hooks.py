@@ -182,11 +182,17 @@ fixtures = [
 permission_query_conditions = {
 	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_query_conditions",
 	"Mobile Trip": "mobilesales.overrides.permissions.trip_query_conditions",
+	"Customer Visit": "mobilesales.overrides.permissions.visit_query_conditions",
+	"Sales Invoice": "mobilesales.overrides.permissions.sales_invoice_query_conditions",
+	"Payment Entry": "mobilesales.overrides.permissions.payment_entry_query_conditions",
 }
 
 has_permission = {
 	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_has_permission",
 	"Mobile Trip": "mobilesales.overrides.permissions.trip_has_permission",
+	"Customer Visit": "mobilesales.overrides.permissions.visit_has_permission",
+	"Sales Invoice": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
+	"Payment Entry": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
 }
 
 # Document Events

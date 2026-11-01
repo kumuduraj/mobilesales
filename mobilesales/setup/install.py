@@ -2,6 +2,8 @@ import frappe
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 from frappe.model.naming import NamingSeries
 
+from mobilesales.setup.permissions import ensure_agent_permissions
+
 MOBILE_SINV_SERIES = "MB-SINV-.YY.-.#####"
 
 # (reason, category, requires_remark)
@@ -24,6 +26,7 @@ def after_install():
 	"""
 	create_default_no_sale_reasons()
 	add_mobile_invoice_series()
+	ensure_agent_permissions()
 
 
 def after_migrate():
@@ -34,6 +37,7 @@ def after_migrate():
 	"""
 	create_default_no_sale_reasons()
 	add_mobile_invoice_series()
+	ensure_agent_permissions()
 
 
 def add_mobile_invoice_series():
