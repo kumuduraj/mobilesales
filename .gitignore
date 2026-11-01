@@ -1,0 +1,9 @@
+node_modules/
+frontend/node_modules/
+*.pyc
+__pycache__/
+.env
+site_config.json
+*.log
+.DS_Store
+*.egg-info/
