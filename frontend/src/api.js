@@ -1,5 +1,6 @@
 // Thin wrapper around Frappe's /api/method endpoint: CSRF header, plain-language errors, offline guard.
 import { online } from "./state"
+import { __ } from "./translation"
 
 export class ApiError extends Error {}
 

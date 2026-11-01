@@ -135,7 +135,15 @@ class TestMobileAPI(MobileSalesTestCase):
 		trip = self.load_trip(self.agent_a)
 		status, html = self.render_host_page(self.agent_a.user)
 		self.assertEqual(status, 200, html[:2000])
+		# ms_boot is a JS object literal (not a quoted / HTML-escaped string) with the keys the SPA reads.
 		boot = json.loads(re.search(r"window\.ms_boot = (.*?);\n", html).group(1))
+		self.assertIsInstance(boot, dict)
+		self.assertEqual(set(boot), {"csrf_token", "site_name", "lang", "translations", "context"})
+		self.assertEqual(boot["translations"], {})  # English: no Desk message set in the page
+		self.assertEqual(
+			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "denominations"}
+		)
+		self.assertIn("window.ms_fail", html)  # on-screen "App failed to load" instead of a blank page
 		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
 		self.assertEqual(boot["context"]["agent"]["name"], self.agent_a.name)
 		self.assertTrue(boot["csrf_token"])

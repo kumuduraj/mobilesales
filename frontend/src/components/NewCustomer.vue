@@ -25,6 +25,7 @@
 import { reactive, ref } from "vue"
 import { call, m } from "../api"
 import { online } from "../state"
+import { __ } from "../translation"
 
 const emit = defineEmits(["created"])
 const form = reactive({ customer_name: "", mobile_no: "", address_line1: "", city: "" })

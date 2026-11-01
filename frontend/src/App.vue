@@ -46,6 +46,7 @@
 import { onMounted } from "vue"
 import { online, session } from "./state"
 import { loadContext } from "./context"
+import { __ } from "./translation"
 
 const tabs = [
 	{ to: "/", icon: "🚚", label: __("Today") },

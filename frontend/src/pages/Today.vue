@@ -69,6 +69,7 @@ import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
 import { loadContext } from "../context"
 import { money, online, qty, session } from "../state"
+import { __ } from "../translation"
 
 const trip = computed(() => session.ctx?.trip)
 const stock = ref([])

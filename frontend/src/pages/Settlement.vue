@@ -87,6 +87,7 @@
 import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
 import { money, online, qty, session } from "../state"
+import { __ } from "../translation"
 
 const trip = computed(() => session.ctx?.trip)
 const data = ref(null)

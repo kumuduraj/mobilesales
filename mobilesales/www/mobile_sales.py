@@ -3,7 +3,7 @@
 import json
 
 import frappe
-from frappe.boot import load_translations
+from frappe.translate import get_translations_from_apps
 
 from mobilesales.api import mobile as mobile_api
 
@@ -28,9 +28,15 @@ def get_context(context):
 		site_name=frappe.local.site,
 		lang=frappe.local.lang,
 		context=mobile_api.get_context(),
+		translations=app_translations(frappe.local.lang),
 	)
-	load_translations(boot)
-	boot.messages = boot.pop("__messages", {})
 	# The template's tojson uses plain json.dumps (no dates); encode like /api/method responses do.
 	context.boot = json.loads(frappe.as_json(boot))
 	return context
+
+
+def app_translations(lang: str) -> dict:
+	"""Only this app's strings (the SPA's __()), not Desk's whole message set; English needs none."""
+	if not lang or lang == "en":
+		return {}
+	return get_translations_from_apps(lang, ["mobilesales"])

@@ -192,6 +192,7 @@ import { computed, onMounted, reactive, ref } from "vue"
 import { call, m } from "../api"
 import { loadContext } from "../context"
 import { money, newClientRef, online, printUrl, qty, session } from "../state"
+import { __ } from "../translation"
 
 const props = defineProps({ customer: { type: String, required: true } })
 const clientRef = newClientRef() // once per wizard session: re-submitting returns the same visit
