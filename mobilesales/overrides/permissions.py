@@ -89,15 +89,29 @@ def visit_query_conditions(user: str | None = None) -> str:
 
 def visit_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
 	user = user or frappe.session.user
+	if ptype == "delete":
+		return _can_delete_visit(doc, user)
 	if not is_restricted_agent(user, VOUCHER_UNRESTRICTED_ROLES):
 		return True
-	agent = doc.get("agent") or (
-		doc.get("mobile_trip") and frappe.db.get_value("Mobile Trip", doc.mobile_trip, "agent")
-	)
+	agent = _visit_agent(doc)
 	if not agent:
 		# A new visit without a trip yet: validate() enforces the trip's agent on save.
 		return doc.is_new()
 	return _agent_user(agent) == user
+
+
+def _visit_agent(doc) -> str | None:
+	return doc.get("agent") or (
+		doc.get("mobile_trip") and frappe.db.get_value("Mobile Trip", doc.mobile_trip, "agent")
+	)
+
+
+def _can_delete_visit(doc, user) -> bool:
+	"""Supervisors delete as their role allows; anyone deleting through the Agent role (even with other
+	roles) only their own drafts, never submitted or cancelled visits."""
+	if user == "Administrator" or {"Mobile Sales Supervisor", "System Manager"} & set(frappe.get_roles(user)):
+		return True
+	return doc.get("docstatus") == 0 and _agent_user(_visit_agent(doc)) == user
 
 
 def sales_invoice_query_conditions(user: str | None = None) -> str:
