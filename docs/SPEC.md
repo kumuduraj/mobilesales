@@ -277,7 +277,7 @@ Agents use a phone-first SPA at `/mobile-sales`; supervisors, store and cashier 
 
 ### 6.1 Mobile SPA
 
-Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mobile-sales.py` (login required, role Mobile Sales Agent). Installable PWA (manifest + service worker caching app shell, item master and route customers).
+Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mobile-sales.py` (login required, role Mobile Sales Agent). Installable PWA (manifest + service worker caching the **app shell only**; every API call goes to the network). While offline the app shows a "No connection" banner and blocks every submit; all submit buttons are guarded against double taps. Caching the item master and route customers moves to the later offline phase (§8.2 phase 7).
 
 | Screen | Content |
 | --- | --- |
@@ -287,7 +287,7 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 | History | Today's visits, reprint invoice/receipt |
 | Settlement | Pre-filled reconciliation, agent enters returned/damaged counts and cash denominations, submits for verification |
 
-**Offline (phase 2):** IndexedDB queue of draft visits keyed by a client UUID (`client_ref` unique field on Customer Visit) so replays are idempotent; stock re-validated server-side on sync.
+**Offline (later offline phase, §8.2 phase 7):** item master and route customer caching, IndexedDB queue of draft visits keyed by a client UUID (`client_ref` unique field on Customer Visit) so replays are idempotent; stock re-validated server-side on sync.
 
 ### 6.2 Whitelisted API (`mobile_sales/api/mobile.py`)
 
@@ -298,16 +298,24 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 | `get_route_plan(trip)` | Route customers + visited flag + outstanding |
 | `get_customer(customer)` | Details, primary contact/address, outstanding invoices, last shelf stock |
 | `price_cart(trip, customer, items)` | Builds unsaved Sales Invoice, returns totals/taxes/pricing-rule results |
+| `search_customers(q)` / `create_customer(payload)` | Customer search; quick-entry new customer |
 | `submit_visit(payload)` | Creates + submits Customer Visit (and SI/PE); idempotent on `client_ref` |
+| `upload_visit_photo(filename, filedata, visit / client_ref)` | Check-in photo (jpeg/png/webp, ≤ 5 MB) on the agent's own visit |
+| `get_visits(trip)` | The trip's visits (History screen) |
 | `start_trip(trip)` / `end_day(trip)` | Status transitions |
-| `get_settlement_draft(trip)` | Computed reconciliation |
-| `submit_settlement(payload)` | Saves settlement, moves workflow to Pending Verification |
+| `get_settlement_draft(trip)` | Computed reconciliation (creates nothing) |
+| `save_settlement(trip, payload)` | Creates / updates the Draft settlement with the agent's fields only (returned / damaged qty and batch, cash denominations); recomputes the reconciliation |
+| `submit_settlement_for_verification(settlement_name)` | Applies the workflow action from Draft to Pending Store (§6.5) |
+| `get_receipt_escpos(doctype, name, width)` | Plain-text receipt lines for the agent's own mobile documents (for the later ESC/POS hand-off, §6.3) |
+| `outstanding_invoice_query(...)` | Previous Outstanding picker on Customer Visit (one customer and company) |
+
+`save_settlement` + `submit_settlement_for_verification` replace the earlier single `submit_settlement`.
 
 Every method resolves the agent from `frappe.session.user`; trip/customer arguments are re-checked against it.
 
 ### 6.3 Printing
 
-Print Format **Mobile Invoice 4in** (Jinja, Sales Invoice, 4-inch thermal) and **Mobile Collection Receipt** (Payment Entry). The Visit screen hands the rendered invoice to the existing Evonet Android ESC/POS print service (`lk.evonet.escposprint`) for Bluetooth printing; browser print as fallback. Settlement Print Format **Mobile Settlement Sheet** (A4) with signature lines for agent, store keeper, cashier.
+Print Format **Mobile Invoice 4in** (Jinja, Sales Invoice, 4-inch thermal) and **Mobile Collection Receipt** (Payment Entry). Up to v1.0.0 the Visit and History screens print through the browser print view. The hand-off to the Evonet Android ESC/POS print service (`lk.evonet.escposprint`) for Bluetooth printing is **deferred until after v1.0.0**; `get_receipt_escpos` already returns the plain-text lines it will use. Settlement Print Format **Mobile Settlement Sheet** (A4) with signature lines for agent, store keeper, cashier.
 
 ### 6.4 Roles and permissions
 
@@ -413,7 +421,7 @@ mobile_sales/
 2. **Trip + stock issue** — Mobile Trip, issue/top-up Stock Entries, status machine, van stock API.
 3. **Customer Visit** — Desk form first: outcomes, customer update, shelf stock, SI + PE creation, cancel chain, 4-inch print formats.
 4. **Settlement** — reconciliation service, settlement form, workflow, ledger postings, post-condition checks, settlement sheet.
-5. **Mobile SPA** — screens in §6.1 on top of the API, PWA shell, ESC/POS print hand-off.
+5. **Mobile SPA** — screens in §6.1 on top of the API, PWA shell (app shell cache only), browser printing. (ESC/POS hand-off deferred until after v1.0.0, §6.3.)
 6. **Reports + workspace** — §7.
 7. **Phase 2** — offline queue, customer sales returns (credit note into damage/return warehouse from a visit), GPS track.
 

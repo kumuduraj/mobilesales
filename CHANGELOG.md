@@ -1,3 +1,25 @@
+## v0.5.0 — Phase 5: Mobile phone app
+
+- Phone app at /mobile-sales (Vue 3 + frappe-ui, installable PWA) for Mobile Sales Agents: Today (trip,
+  van stock, Start Trip / End Day), Route (planned customers in sequence, search, quick-entry new
+  customer), Visit wizard (check-in GPS + photo, customer changes, shelf stock, outcome, cart from van
+  stock with server pricing, collection of current and previous invoices, submit, print), History
+  (today's visits, reprint) and Settlement (returned / damaged counts, cash denominations, submit for
+  verification).
+- Whitelisted API (spec §6.2): every method requires a Mobile Sales role, resolves the agent from the
+  session and re-checks trip / visit ownership; totals are recomputed on the server. `submit_visit` is
+  idempotent on `client_ref` (a repeated submit returns the same visit). `save_settlement` +
+  `submit_settlement_for_verification` replace the planned single `submit_settlement`.
+- Online only: the service worker caches the app shell only; an offline banner shows and every submit is
+  blocked while offline; submit buttons are protected against double taps. Item master / route caching
+  and the offline queue move to the later offline phase.
+- The host page refuses users without a Mobile Sales role; guests are sent to the login page.
+- Printing through the browser print view; the Android ESC/POS hand-off is deferred until after v1.0.0
+  (`get_receipt_escpos` already returns the receipt lines).
+- Tests: never commit (frappe.db.commit raises inside every test, after a host-page test committed test
+  data to the live site); nested `as_user` blocks now return to the previous user, so no API flow runs
+  as Administrator. All test runs moved to the dedicated test site mstest.local. 85 tests.
+
 ## v0.4.1 — fixes from the live pilot
 
 - Fix: collection of previous invoices by agents. ERPNext re-reads each referenced invoice as the
