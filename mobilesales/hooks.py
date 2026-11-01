@@ -89,6 +89,52 @@ required_apps = ["erpnext"]
 after_install = "mobilesales.setup.install.after_install"
 after_migrate = ["mobilesales.setup.install.after_migrate"]
 
+# Fixtures
+# --------
+# Explicit by name: never export records this app does not own.
+
+fixtures = [
+	{
+		"dt": "Role",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Mobile Sales Agent",
+					"Mobile Sales Store Keeper",
+					"Mobile Sales Cashier",
+					"Mobile Sales Supervisor",
+				],
+			]
+		],
+	},
+	{
+		"dt": "Custom Field",
+		"filters": [
+			[
+				"name",
+				"in",
+				[
+					"Sales Invoice-mobile_section",
+					"Sales Invoice-mobile_trip",
+					"Sales Invoice-customer_visit",
+					"Sales Invoice-is_mobile_sale",
+					"Payment Entry-mobile_section",
+					"Payment Entry-mobile_trip",
+					"Payment Entry-customer_visit",
+					"Stock Entry-mobile_section",
+					"Stock Entry-mobile_trip",
+					"Stock Entry-mobile_purpose",
+					"Journal Entry-mobile_section",
+					"Journal Entry-mobile_trip",
+					"Journal Entry-mobile_settlement",
+				],
+			]
+		],
+	},
+]
+
 # Uninstallation
 # ------------
 
@@ -133,25 +179,31 @@ after_migrate = ["mobilesales.setup.install.after_migrate"]
 # -----------
 # Permissions evaluated in scripted ways
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+permission_query_conditions = {
+	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_query_conditions",
+}
+
+has_permission = {
+	"Mobile Sales Agent": "mobilesales.overrides.permissions.agent_has_permission",
+}
 
 # Document Events
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Sales Invoice": {"validate": "mobilesales.overrides.guards.validate_sales_invoice"},
+	"Delivery Note": {"validate": "mobilesales.overrides.guards.validate_delivery_note"},
+	"Stock Reconciliation": {"validate": "mobilesales.overrides.guards.validate_stock_reconciliation"},
+	"Stock Entry": {"validate": "mobilesales.overrides.guards.validate_stock_entry"},
+	"Payment Entry": {"validate": "mobilesales.overrides.guards.validate_payment_entry"},
+	"Journal Entry": {"validate": "mobilesales.overrides.guards.validate_journal_entry"},
+	"Warehouse": {
+		"on_update": "mobilesales.overrides.guards.on_warehouse_change",
+		"on_trash": "mobilesales.overrides.guards.on_warehouse_change",
+		"after_rename": "mobilesales.overrides.guards.on_warehouse_change",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
