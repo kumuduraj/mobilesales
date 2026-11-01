@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="{{ boot.lang if boot else 'en' }}">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<meta name="theme-color" content="#1f2937" />
+		<link rel="icon" href="/assets/mobilesales/frontend/icons/icon-192.png" />
+		<link rel="apple-touch-icon" href="/assets/mobilesales/frontend/icons/icon-192.png" />
+		<title>Mobile Sales</title>
+		<script type="module" crossorigin src="/assets/mobilesales/frontend/assets/index-DbrH05Bm.js"></script>
+		<link rel="stylesheet" crossorigin href="/assets/mobilesales/frontend/assets/index-DMnTgjSY.css">
+	<link rel="manifest" href="/assets/mobilesales/frontend/manifest.webmanifest"></head>
+	<body>
+		{% if not_allowed %}
+		<div style="font-family: sans-serif; max-width: 420px; margin: 15vh auto; padding: 0 16px; text-align: center">
+			<h2>Mobile Sales</h2>
+			<p>{{ _("This app is only for mobile sales agents.") }}</p>
+			<p><a href="/app">{{ _("Go to the desk") }}</a></p>
+		</div>
+		{% else %}
+		<div id="app"></div>
+		<script>
+			window.ms_boot = {{ boot | tojson }};
+			window.csrf_token = window.ms_boot.csrf_token;
+		</script>
+		{% endif %}
+	</body>
+</html>
