@@ -165,7 +165,7 @@ def update_trip_summary(trip_name):
 		"Customer Visit", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="outcome"
 	)
 	invoiced = frappe.get_all(
-		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="grand_total"
+		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1, "is_return": 0}, pluck="grand_total"
 	)
 	collected = frappe.get_all(
 		"Payment Entry", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="paid_amount"

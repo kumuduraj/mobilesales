@@ -20,23 +20,27 @@ MANAGED_RIGHTS = (
 READ = {"read": 1}
 POST_BUNDLES = {"read": 1, "write": 1, "create": 1, "submit": 1}
 # DocType -> {role: rights}; every other right in MANAGED_RIGHTS is forced to 0 for that rule.
+# Masters a visit reads while ERPNext builds its invoice / credit notes as the session user: the agent,
+# or a supervisor recording or submitting a visit from Desk (e.g. returns above the agent's limit).
+VISIT_MASTER_ROLES = {AGENT_ROLE: READ, SUPERVISOR_ROLE: READ}
 ROLE_PERMISSIONS = {
-	"Customer": {AGENT_ROLE: READ},
-	"Item": {AGENT_ROLE: READ},
-	"UOM": {AGENT_ROLE: READ},
-	"Price List": {AGENT_ROLE: READ},
-	"Item Price": {AGENT_ROLE: READ},
-	"Batch": {AGENT_ROLE: READ},
-	"Contact": {AGENT_ROLE: READ},
-	"Address": {AGENT_ROLE: READ},
-	"Territory": {AGENT_ROLE: READ},
-	"Customer Group": {AGENT_ROLE: READ},
+	"Customer": VISIT_MASTER_ROLES,
+	"Item": VISIT_MASTER_ROLES,
+	"UOM": VISIT_MASTER_ROLES,
+	"Price List": VISIT_MASTER_ROLES,
+	"Item Price": VISIT_MASTER_ROLES,
+	"Batch": VISIT_MASTER_ROLES,
+	"Contact": VISIT_MASTER_ROLES,
+	"Address": VISIT_MASTER_ROLES,
+	"Territory": VISIT_MASTER_ROLES,
+	"Customer Group": VISIT_MASTER_ROLES,
 	# Agents: own trips only (permission hooks). Supervisors: visit cancel re-reads the invoices.
 	"Sales Invoice": {AGENT_ROLE: {"read": 1, "print": 1}, SUPERVISOR_ROLE: {"read": 1, "print": 1}},
 	"Payment Entry": {AGENT_ROLE: {"read": 1, "print": 1}, SUPERVISOR_ROLE: {"read": 1, "print": 1}},
 	# ERPNext's get_party_account() checks the session user's select/read on the receivable account
-	# while an agent's visit builds its invoice and payment; select only: no reading Account records.
-	"Account": {AGENT_ROLE: {"select": 1}},
+	# while a visit builds its invoice, credit notes and payment (the agent, or a supervisor submitting a
+	# visit from Desk); select only: no reading Account records.
+	"Account": {AGENT_ROLE: {"select": 1}, SUPERVISOR_ROLE: {"select": 1}},
 	# ERPNext creates Serial and Batch Bundles for batch items without ignore_permissions, as the user
 	# who submits the stock document: agent (sale), store keeper (trip load), cashier / supervisor
 	# (settlement). Standard ERPNext gives the same rights to every operational stock role.

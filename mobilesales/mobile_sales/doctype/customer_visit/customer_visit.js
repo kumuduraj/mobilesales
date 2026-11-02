@@ -11,6 +11,19 @@ frappe.ui.form.on("Customer Visit", {
 			query: "mobilesales.api.mobile.outstanding_invoice_query",
 			filters: { customer: frm.doc.customer, company: frm.doc.company },
 		}));
+		frm.set_query("item_code", "return_items", () => ({ filters: { is_stock_item: 1, disabled: 0 } }));
+		frm.set_query("against_invoice", "return_items", (doc, cdt, cdn) => ({
+			query: "mobilesales.api.mobile.return_invoice_query",
+			filters: { customer: frm.doc.customer, company: frm.doc.company, item_code: locals[cdt][cdn].item_code },
+		}));
+	},
+
+	// enter one discount, the other is computed on save
+	additional_discount_percentage(frm) {
+		if (frm.doc.additional_discount_percentage) frm.set_value("discount_amount", 0);
+	},
+	discount_amount(frm) {
+		if (frm.doc.discount_amount) frm.set_value("additional_discount_percentage", 0);
 	},
 
 	refresh(frm) {
@@ -31,6 +44,15 @@ frappe.ui.form.on("Customer Visit", {
 		if (frm.doc.docstatus === 0 && !frm.doc.latitude && navigator.geolocation) {
 			frm.add_custom_button(__("Capture Location"), () => capture_location(frm));
 		}
+	},
+});
+
+frappe.ui.form.on("Customer Visit Item", {
+	discount_percentage(frm, cdt, cdn) {
+		if (locals[cdt][cdn].discount_percentage) frappe.model.set_value(cdt, cdn, "discount_amount", 0);
+	},
+	discount_amount(frm, cdt, cdn) {
+		if (locals[cdt][cdn].discount_amount) frappe.model.set_value(cdt, cdn, "discount_percentage", 0);
 	},
 });
 

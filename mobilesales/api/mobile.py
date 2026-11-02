@@ -13,7 +13,7 @@ from frappe.utils import cint, flt, now_datetime
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
-from mobilesales.services import customers, invoicing, receipts, reconciliation, settlement
+from mobilesales.services import customers, invoicing, receipts, reconciliation, returns, settlement
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
 
@@ -29,6 +29,7 @@ SETTINGS_FLAGS = (
 	"require_geolocation",
 	"apply_customer_updates_directly",
 	"selling_price_list",
+	"returns_enabled",
 )
 VISIT_FIELDS = (
 	"latitude",
@@ -44,8 +45,10 @@ VISIT_FIELDS = (
 	"new_city",
 	"new_tax_id",
 	"collect_amount",
+	"additional_discount_percentage",
+	"discount_amount",
 )
-OUTCOMES = ("Sale", "No Sale", "Collection Only", "Shop Closed")
+OUTCOMES = ("Sale", "No Sale", "Collection Only", "Shop Closed", "Return Only")
 PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
 SEARCH_LIMIT = 20
@@ -78,6 +81,7 @@ def session_agent() -> frappe._dict | None:
 			"default_route",
 			"max_discount_pct",
 			"credit_limit_per_invoice",
+			"max_return_value_per_visit",
 		],
 		as_dict=True,
 	)
@@ -155,6 +159,7 @@ def get_context() -> dict:
 		"no_sale_reasons": frappe.get_all(
 			"Visit No Sale Reason", fields=["name", "category", "requires_remark"], order_by="name asc"
 		),
+		"return_reasons": frappe.get_all("Mobile Return Reason", fields=["name", "requires_remark"], order_by="name asc"),
 		"denominations": list(reconciliation.DENOMINATIONS),
 	}
 
@@ -239,7 +244,10 @@ def get_customer(customer: str) -> dict:
 	require_roles()
 	if not customer or not frappe.db.exists("Customer", customer):
 		frappe.throw(_("Customer {0} not found.").format(customer))
-	return customers.customer_card(customer, ms_settings.get_settings().company)
+	company = ms_settings.get_settings().company
+	card = customers.customer_card(customer, company)
+	card["credit_available"] = returns.credit_available(customer, company)
+	return card
 
 
 @frappe.whitelist()
@@ -252,6 +260,91 @@ def create_customer(payload: str | dict) -> dict:
 def get_customer_form_options() -> dict:
 	require_roles()
 	return customers.form_options(ms_settings.get_settings())
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def return_invoice_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Against Invoice picker on return lines: one customer's submitted, non-return invoices of the
+	company (optionally containing the item). Mobile or standard, never another customer's."""
+	require_roles(PICKER_ROLES)
+	filters = frappe._dict(filters or {})
+	if not (filters.customer and filters.company):
+		return []
+	conditions = {
+		"customer": filters.customer,
+		"company": filters.company,
+		"docstatus": 1,
+		"is_return": 0,
+		"name": ["like", f"%{txt}%"],
+	}
+	if filters.item_code:
+		conditions["name"] = [
+			"in",
+			frappe.get_all("Sales Invoice Item", filters={"item_code": filters.item_code, "docstatus": 1}, pluck="parent")
+			or [""],
+		]
+	return frappe.get_all(
+		"Sales Invoice",
+		filters=conditions,
+		fields=["name", "posting_date", "grand_total"],
+		order_by="posting_date desc, name desc",
+		start=start,
+		page_length=page_len,
+		as_list=True,
+	)
+
+
+@frappe.whitelist()
+def get_returnable_lines(invoice: str, customer: str) -> list[dict]:
+	"""Lines of the customer's invoice that can still be returned, with qty left and net rate."""
+	require_roles()
+	owner = frappe.db.get_value("Sales Invoice", invoice, ["customer", "docstatus", "is_return"], as_dict=True)
+	if not owner or owner.customer != customer or owner.docstatus != 1 or owner.is_return:
+		frappe.throw(_("Sales Invoice {0} is not a submitted invoice of {1}.").format(invoice, customer))
+	return [
+		{
+			"sales_invoice_item": line.name,
+			"item_code": line.item_code,
+			"item_name": line.item_name,
+			"uom": line.uom,
+			"returnable_qty": flt(line.returnable_qty),
+			"rate": flt(line.net_rate),
+			"batches": [{"batch_no": b, "qty": q} for b, q in line.batches.items() if flt(q) > 0],
+		}
+		for line in returns.returnable_lines(invoice)
+	]
+
+
+@frappe.whitelist()
+def get_customer_invoices(customer: str) -> list[dict]:
+	"""The customer's recent submitted, non-return invoices (return picker on the phone)."""
+	require_roles()
+	return frappe.get_all(
+		"Sales Invoice",
+		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0},
+		fields=["name", "posting_date", "grand_total"],
+		order_by="posting_date desc, name desc",
+		limit_page_length=SEARCH_LIMIT,
+	)
+
+
+@frappe.whitelist()
+def search_items(q: str = "") -> list[dict]:
+	"""Active stock items without batches for returns without an invoice."""
+	require_roles()
+	q = (q or "").strip()
+	if len(q) < 2:
+		return []
+	like = f"%{q}%"
+	return frappe.get_all(
+		"Item",
+		filters={"disabled": 0, "is_stock_item": 1, "has_batch_no": 0},
+		or_filters={"name": ["like", like], "item_name": ["like", like]},
+		fields=["name as item_code", "item_name", "stock_uom"],
+		order_by="item_name asc",
+		limit_page_length=SEARCH_LIMIT,
+	)
 
 
 @frappe.whitelist()
@@ -295,38 +388,124 @@ def _sale_rows(items) -> list[dict]:
 				"qty": flt(raw.qty),
 				"uom": raw.uom or None,
 				"discount_percentage": flt(raw.discount_percentage),
+				"discount_amount": flt(raw.discount_amount),
 			}
 		)
 	return rows
 
 
+def _return_rows(items) -> list[dict]:
+	rows = []
+	for raw in frappe.parse_json(items) or []:
+		raw = frappe._dict(raw)
+		if not raw.item_code or flt(raw.qty) <= 0:
+			frappe.throw(_("Every return line needs an item and a quantity above 0."))
+		rows.append(
+			{
+				"item_code": raw.item_code,
+				"qty": flt(raw.qty),
+				"uom": raw.uom or None,
+				"against_invoice": raw.against_invoice or None,
+				"sales_invoice_item": raw.sales_invoice_item or None,
+				"return_reason": raw.return_reason,
+				"condition": raw.condition if raw.condition in ("Resaleable", "Damaged") else "Resaleable",
+				"remarks": raw.remarks or None,
+			}
+		)
+	return rows
+
+
+def _previous_rows(rows) -> list[dict]:
+	return [
+		{"sales_invoice": raw.sales_invoice, "allocated": max(flt(raw.allocated), 0)}
+		for raw in (frappe._dict(r) for r in frappe.parse_json(rows) or [])
+		if raw.sales_invoice
+	]
+
+
 @frappe.whitelist()
-def price_cart(trip: str, customer: str, items: str | list) -> dict:
-	"""Prices a cart exactly as the invoice will be priced (ERPNext pricing rules and taxes)."""
+def price_cart(
+	trip: str,
+	customer: str,
+	items: str | list,
+	discount: str | dict | None = None,
+	returns_items: str | list | None = None,
+	collect_previous: str | list | None = None,
+) -> dict:
+	"""Prices a cart exactly as the invoice and credit notes will be priced (ERPNext pricing rules, taxes),
+	checks the discount cap and the return limit, and plans the return credit set-off."""
 	doc = own_trip(trip)
 	if doc.docstatus != 1 or doc.status not in ("Loaded", "In Field"):
 		frappe.throw(_("Trip {0} is {1}; nothing can be sold on it.").format(doc.name, _(doc.status)))
 	if not frappe.db.exists("Customer", customer):
 		frappe.throw(_("Customer {0} not found.").format(customer))
 	rows = _sale_rows(items)
-	if not rows:
-		return {"lines": [], "net_total": 0, "total_taxes": 0, "grand_total": 0, "rounded_total": 0, "taxes": []}
-
-	agent = frappe.db.get_value("Mobile Sales Agent", doc.agent, "max_discount_pct")
-	for row in rows:
-		if row["discount_percentage"] > flt(agent):
-			frappe.throw(_("Discount {0}% is above your limit of {1}%.").format(row["discount_percentage"], flt(agent)))
+	return_rows = _return_rows(returns_items)
+	discount = frappe._dict(frappe.parse_json(discount) or {})
+	agent = frappe.db.get_value(
+		"Mobile Sales Agent", doc.agent, ["max_discount_pct", "max_return_value_per_visit"], as_dict=True
+	)
+	settings = ms_settings.get_settings()
 
 	cart = frappe.new_doc("Customer Visit")
-	cart.update({"mobile_trip": doc.name, "customer": customer, "visit_datetime": now_datetime(), "outcome": "Sale"})
+	cart.update(
+		{
+			"mobile_trip": doc.name,
+			"customer": customer,
+			"company": doc.company,
+			"visit_datetime": now_datetime(),
+			"outcome": "Sale" if rows else "Return Only",
+			"additional_discount_percentage": flt(discount.additional_discount_percentage),
+			"discount_amount": flt(discount.discount_amount),
+		}
+	)
 	for row in rows:
 		cart.append("sale_items", row)
+	for row in return_rows:
+		cart.append("return_items", row)
+	for row in _previous_rows(collect_previous):
+		row["outstanding"] = flt(frappe.db.get_value("Sales Invoice", row["sales_invoice"], "outstanding_amount"))
+		cart.append("collect_previous", row)
+	notes = returns.validate_returns(cart, agent, settings) if return_rows else []
+	result = {
+		"lines": [],
+		"net_total": 0,
+		"total_taxes": 0,
+		"grand_total": 0,
+		"rounded_total": 0,
+		"taxes": [],
+		"discount_amount": 0,
+		"additional_discount_percentage": 0,
+		"manual_discount_pct": 0,
+		"max_discount_pct": flt(agent.max_discount_pct),
+		"returns": [
+			{"item_code": r.item_code, "qty": r.qty, "uom": r.uom, "rate": r.rate, "amount": r.amount, "against_invoice": r.against_invoice}
+			for r in cart.return_items
+		],
+		"return_total": flt(cart.return_total),
+	}
+	payable = 0.0
+	if rows:
+		result.update(_priced_sale(cart, doc, agent))
+		payable = flt(result["rounded_total"])
+	plan = returns.plan_set_off(cart, notes, payable)
+	credit = returns.credit_by_target(plan)
+	result["credit_applied"] = flt(sum(credit.values()), 2)
+	result["credit_on_sale"] = flt(credit.get(returns.SALE, 0), 2)
+	result["credit_on_previous"] = {k: flt(v, 2) for k, v in credit.items() if k != returns.SALE}
+	result["due_on_sale"] = flt(payable - result["credit_on_sale"], 2)
+	result["credit_left"] = flt(flt(cart.return_total) - result["credit_applied"], 2)
+	return result
+
+
+def _priced_sale(cart, doc, agent) -> dict:
 	si = invoicing.build_invoice(cart, save=False)
+	invoicing.check_discount_cap(si, agent.max_discount_pct)
 	invoicing.copy_invoice_to_visit(cart, si)
 	available = {}
 	for code, qty in frappe.get_all(
 		"Bin",
-		filters={"warehouse": doc.van_warehouse, "item_code": ["in", [r["item_code"] for r in rows]]},
+		filters={"warehouse": doc.van_warehouse, "item_code": ["in", [r.item_code for r in cart.sale_items]]},
 		fields=["item_code", "actual_qty"],
 		as_list=True,
 	):
@@ -343,7 +522,9 @@ def price_cart(trip: str, customer: str, items: str | list) -> dict:
 				"qty": row.qty,
 				"stock_qty": row.stock_qty,
 				"price_list_rate": row.price_list_rate,
+				"pricing_rule_rate": row.pricing_rule_rate,
 				"discount_percentage": row.discount_percentage,
+				"discount_amount": row.discount_amount,
 				"rate": row.rate,
 				"amount": row.amount,
 				"pricing_rules": item.pricing_rules,
@@ -358,6 +539,9 @@ def price_cart(trip: str, customer: str, items: str | list) -> dict:
 		"grand_total": cart.grand_total,
 		"rounded_total": cart.rounded_total,
 		"taxes": [{"description": t.description, "amount": t.tax_amount} for t in si.taxes],
+		"discount_amount": cart.discount_amount,
+		"additional_discount_percentage": cart.additional_discount_percentage,
+		"manual_discount_pct": si.flags.manual_discount.percentage,
 	}
 
 
@@ -373,6 +557,10 @@ def _visit_summary(visit) -> dict:
 		"grand_total": visit.grand_total,
 		"rounded_total": visit.rounded_total,
 		"total_collected": visit.total_collected,
+		"return_total": visit.get("return_total"),
+		"credit_applied": visit.get("credit_applied"),
+		"credit_notes": visit.get("credit_notes"),
+		"credit_journal": visit.get("credit_journal"),
 		"customer_update_status": visit.customer_update_status,
 		"client_ref": visit.client_ref,
 	}
@@ -425,10 +613,10 @@ def submit_visit(payload: str | dict) -> dict:
 					"remarks": raw.remarks,
 				},
 			)
-	for raw in frappe.parse_json(data.collect_previous) or []:
-		raw = frappe._dict(raw)
-		if raw.sales_invoice and flt(raw.allocated) > 0:
-			visit.append("collect_previous", {"sales_invoice": raw.sales_invoice, "allocated": flt(raw.allocated)})
+	for row in _return_rows(data.return_items or []):
+		visit.append("return_items", row)
+	for row in _previous_rows(data.collect_previous):
+		visit.append("collect_previous", row)
 
 	try:
 		visit.insert()
@@ -505,6 +693,9 @@ def get_visits(trip: str) -> list[dict]:
 			"no_sale_reason",
 			"sales_invoice",
 			"payment_entry",
+			"credit_notes",
+			"return_total",
+			"credit_applied",
 			"grand_total",
 			"rounded_total",
 			"total_collected",

@@ -47,7 +47,7 @@ ROLE_USERS = {
 	"store": ("ms.test.store@example.com", ("Mobile Sales Store Keeper",)),
 	"cashier": ("ms.test.cashier@example.com", ("Mobile Sales Cashier",)),
 	"supervisor": ("ms.test.supervisor@example.com", ("Mobile Sales Supervisor",)),
-	"office": ("ms.test.office@example.com", ("Accounts User", "Accounts Manager", "Sales User", "Stock User")),
+	"office": ("ms.test.office@example.com", ("Accounts User", "Accounts Manager", "Sales User", "Stock User", "Stock Manager")),
 }
 
 
@@ -144,6 +144,7 @@ class MobileSalesTestCase(IntegrationTestCase):
 		)
 		cls.store = make_warehouse(f"{PREFIX} Store", root_wh, cls.company)
 		cls.van_group = make_warehouse(f"{PREFIX} Vans", root_wh, cls.company, is_group=1)
+		cls.customer_returns = make_warehouse(f"{PREFIX} Customer Returns", root_wh, cls.company)
 
 		cls.main_cash = frappe.get_cached_value("Company", cls.company, "default_cash_account")
 		cash_root = frappe.db.get_value("Account", cls.main_cash, "parent_account")
@@ -189,6 +190,9 @@ class MobileSalesTestCase(IntegrationTestCase):
 				"sales_person_parent": cls.sales_team,
 				"selling_price_list": cls.price_list,
 				"sinv_naming_series": "MB-SINV-.YY.-.#####",
+				"sret_naming_series": "MB-SRET-.YY.-.#####",
+				"returns_enabled": 1,
+				"customer_return_warehouse": cls.customer_returns,
 			}
 		)
 		cls._patches = [
@@ -228,8 +232,9 @@ class MobileSalesTestCase(IntegrationTestCase):
 			frappe.get_doc({"doctype": "User", "email": user, "first_name": name, "send_welcome_email": 0}).insert()
 			vehicle = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN-{'AB'[idx]}"}).insert().name
 			agent = frappe.get_doc(
-				{"doctype": "Mobile Sales Agent", "user": user, "agent_name": name, "default_vehicle": vehicle}
-			).insert()
+				{"doctype": "Mobile Sales Agent", "user": user, "agent_name": name, "default_vehicle": vehicle,
+				 "max_return_value_per_visit": 10000}
+			).insert()  # fmt: skip
 			with as_user(cls.users.supervisor):
 				agent_setup.setup_agent(agent.name)
 				vehicles.setup_vehicle(vehicle)

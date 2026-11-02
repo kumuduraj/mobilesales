@@ -18,7 +18,7 @@ WORKFLOW_DRAFT, WORKFLOW_APPROVED = "Draft", "Approved"
 # workflow state -> (editable field groups, roles that may edit them)
 EDIT_RULES = {
 	"Draft": ({"stock", "cash"}, {AGENT, SUPERVISOR, SYSTEM_MANAGER}),
-	"Pending Store": ({"stock"}, {STORE_KEEPER, SUPERVISOR, SYSTEM_MANAGER}),
+	"Pending Store": ({"stock", "returns"}, {STORE_KEEPER, SUPERVISOR, SYSTEM_MANAGER}),
 	"Pending Cashier": ({"cash"}, {CASHIER, SUPERVISOR, SYSTEM_MANAGER}),
 }
 
@@ -75,11 +75,15 @@ def validate(doc):
 	reconciliation.refresh_settlement(doc)
 
 
+GROUP_LABELS = {"stock": "stock counts", "cash": "cash", "returns": "customer return counts"}
+
+
 def _entered(doc) -> dict:
 	stock_values = {r.item_code: (flt(r.returned_qty), flt(r.damaged_qty), r.damaged_batch_no or None) for r in doc.stock_lines}
 	counts = {flt(r.denomination): int(r.count or 0) for r in doc.denominations}
 	cash_values = (counts, None if any(counts.values()) else flt(doc.cash_handed_over))
-	return {"stock": stock_values, "cash": cash_values}
+	return_values = {r.item_code: (flt(r.received_qty), flt(r.damaged_qty)) for r in doc.get("return_lines") or []}
+	return {"stock": stock_values, "cash": cash_values, "returns": return_values}
 
 
 def validate_edit_rules(doc, before):
@@ -93,7 +97,7 @@ def validate_edit_rules(doc, before):
 	if changed - allowed or not (roles & editors or frappe.session.user == "Administrator"):
 		frappe.throw(
 			_("In state {0} you cannot change {1}.").format(
-				frappe.bold(_(state)), ", ".join(_("stock counts") if g == "stock" else _("cash") for g in sorted(changed))
+				frappe.bold(_(state)), ", ".join(_(GROUP_LABELS[g]) for g in sorted(changed))
 			),
 			frappe.PermissionError,
 		)
@@ -129,6 +133,21 @@ def before_submit(doc):
 	if trip.status != "Settling":
 		frappe.throw(_("Mobile Trip {0} is {1}, not Settling.").format(trip.name, _(trip.status)))
 
+	for row in doc.get("return_lines") or []:
+		if flt(row.received_qty) < 0 or flt(row.damaged_qty) < 0 or flt(row.received_qty, 6) > flt(row.credited_qty, 6):
+			frappe.throw(
+				_("Customer returns {0}: received {1} must be between 0 and the credited {2}.").format(
+					frappe.bold(row.item_code), flt(row.received_qty), flt(row.credited_qty)
+				),
+				title=_("Customer returns"),
+			)
+		if flt(row.damaged_qty, 6) > flt(row.received_qty, 6):
+			frappe.throw(
+				_("Customer returns {0}: damaged {1} is more than received {2}.").format(
+					frappe.bold(row.item_code), flt(row.damaged_qty), flt(row.received_qty)
+				),
+				title=_("Customer returns"),
+			)
 	for row in doc.stock_lines:
 		if flt(row.excess_qty) > 0:
 			frappe.throw(
@@ -161,7 +180,7 @@ def post_settlement(doc):
 	agent = frappe.db.get_value("Mobile Sales Agent", trip.agent, ["cash_account", "employee"], as_dict=True)
 	recover = doc.variance_action == "Recover from Agent" and agent.employee
 
-	rows = {"Return": [], "Damage": [], "Shortage": []}
+	rows = {"Return": [], "Damage": [], "Shortage": [], **_customer_return_rows(doc, trip, settings)}
 	_items, batches = reconciliation.stock_movement(trip.name, trip.van_warehouse)
 	for line in doc.stock_lines:
 		if line.has_batch_no:
@@ -174,7 +193,8 @@ def post_settlement(doc):
 				if flt(qty) > 0:
 					rows[purpose].append((line.item_code, flt(qty), None))
 
-	_require(settings, rows["Return"] and "return_warehouse", rows["Damage"] and "damage_warehouse",
+	_require(settings, rows["Return"] and "return_warehouse", (rows["Damage"] or rows["Return Damage"]) and "damage_warehouse",
+		rows["Return Shortage"] and "stock_shortage_account",
 		rows["Shortage"] and "stock_shortage_account", "main_cash_account",
 		flt(doc.cash_variance) and "cash_shortage_account", recover and "employee_recovery_account")  # fmt: skip
 
@@ -182,9 +202,13 @@ def post_settlement(doc):
 	links["return_entry"] = _stock_entry(doc, trip, "Return", "Material Transfer", rows["Return"], settings.return_warehouse)
 	links["damage_entry"] = _stock_entry(doc, trip, "Damage", "Material Transfer", rows["Damage"], settings.damage_warehouse)
 	links["shortage_entry"] = _stock_entry(doc, trip, "Shortage", "Material Issue", rows["Shortage"], None, settings.stock_shortage_account)
+	returns_wh = settings.customer_return_warehouse
+	links["return_damage_entry"] = _stock_entry(doc, trip, "Return Damage", "Material Transfer", rows["Return Damage"], settings.damage_warehouse, source=returns_wh)
+	links["return_shortage_entry"] = _stock_entry(doc, trip, "Return Shortage", "Material Issue", rows["Return Shortage"], None, settings.stock_shortage_account, source=returns_wh)
 
-	if links["shortage_entry"] and recover:
-		value = flt(frappe.db.get_value("Stock Entry", links["shortage_entry"], "total_outgoing_value"), 2)
+	shortages = [links[f] for f in ("shortage_entry", "return_shortage_entry") if links[f]]
+	if shortages and recover:
+		value = flt(sum(flt(frappe.db.get_value("Stock Entry", name, "total_outgoing_value")) for name in shortages), 2)
 		links["recovery_journal"] = _journal(doc, trip, _("Stock shortage recovered from agent"), [
 			(settings.employee_recovery_account, value, 0, agent.employee),
 			(settings.stock_shortage_account, 0, value, None),
@@ -216,10 +240,38 @@ def post_settlement(doc):
 	check_post_conditions(doc, trip, agent)
 
 	trip_doc = frappe.get_doc("Mobile Trip", trip.name)
-	for purpose, fieldname in (("Return", "return_entry"), ("Damage", "damage_entry"), ("Shortage", "shortage_entry")):
+	for purpose, fieldname in (
+		("Return", "return_entry"),
+		("Damage", "damage_entry"),
+		("Shortage", "shortage_entry"),
+		("Return Damage", "return_damage_entry"),
+		("Return Shortage", "return_shortage_entry"),
+	):
 		if links.get(fieldname):
 			stock.link_stock_entry(trip_doc, frappe.get_doc("Stock Entry", links[fieldname]), purpose)
 	trip_doc.db_set({"status": "Settled", "settlement": doc.name})
+
+
+def _customer_return_rows(doc, trip, settings) -> dict:
+	"""Damaged customer returns -> damage warehouse, missing -> shortage; batches from the trip's
+	credit notes, oldest first. Good returns stay in the customer return warehouse."""
+	rows = {"Return Damage": [], "Return Shortage": []}
+	if not doc.get("return_lines"):
+		return rows
+	_items, batches, _rates = reconciliation.return_movement(trip.name, settings.customer_return_warehouse)
+	for line in doc.return_lines:
+		good = flt(line.received_qty) - flt(line.damaged_qty)
+		if line.has_batch_no:
+			credited = {b: q for (code, b), q in batches.items() if code == line.item_code}
+			plan = reconciliation.allocate_batches(credited, good, line.damaged_qty)
+			rows["Return Damage"] += [(line.item_code, qty, batch) for batch, qty in plan["damaged"].items() if qty > 0]
+			rows["Return Shortage"] += [(line.item_code, qty, batch) for batch, qty in plan["missing"].items() if qty > 0]
+		else:
+			if flt(line.damaged_qty) > 0:
+				rows["Return Damage"].append((line.item_code, flt(line.damaged_qty), None))
+			if flt(line.missing_qty) > 0:
+				rows["Return Shortage"].append((line.item_code, flt(line.missing_qty), None))
+	return rows
 
 
 def _require(settings, *fieldnames):
@@ -228,7 +280,7 @@ def _require(settings, *fieldnames):
 		frappe.throw(_("Set {0} in Mobile Sales Settings before settling.").format(", ".join(_(m) for m in missing)))
 
 
-def _stock_entry(doc, trip, purpose, entry_type, rows, target, expense_account=None):
+def _stock_entry(doc, trip, purpose, entry_type, rows, target, expense_account=None, source=None):
 	if not rows:
 		return None
 	se = frappe.new_doc("Stock Entry")
@@ -247,7 +299,7 @@ def _stock_entry(doc, trip, purpose, entry_type, rows, target, expense_account=N
 			"qty": qty,
 			"uom": frappe.get_cached_value("Item", item_code, "stock_uom"),
 			"conversion_factor": 1,
-			"s_warehouse": trip.van_warehouse,
+			"s_warehouse": source or trip.van_warehouse,
 			"t_warehouse": target,
 		}
 		if batch:
@@ -324,13 +376,15 @@ def check_post_conditions(doc, trip, agent):
 
 
 def reverse_settlement(doc):
-	"""Cancel postings 5 -> 1, then the trip goes back to Settling."""
+	"""Cancel every posting in reverse, then the trip goes back to Settling."""
 	vouchers = [
 		(doctype, doc.get(fieldname))
 		for doctype, fieldname in (
 			("Journal Entry", "variance_journal"),
 			("Journal Entry", "cash_journal"),
 			("Journal Entry", "recovery_journal"),
+			("Stock Entry", "return_shortage_entry"),
+			("Stock Entry", "return_damage_entry"),
 			("Stock Entry", "shortage_entry"),
 			("Stock Entry", "damage_entry"),
 			("Stock Entry", "return_entry"),

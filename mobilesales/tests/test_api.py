@@ -142,7 +142,7 @@ class TestMobileAPI(MobileSalesTestCase):
 		self.assertEqual(set(boot), {"csrf_token", "site_name", "lang", "translations", "context"})
 		self.assertEqual(boot["translations"], {})  # English: no Desk message set in the page
 		self.assertEqual(
-			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "denominations"}
+			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "return_reasons", "denominations"}
 		)
 		self.assertIn("window.ms_fail", html)  # on-screen "App failed to load" instead of a blank page
 		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
