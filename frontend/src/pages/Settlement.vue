@@ -32,19 +32,22 @@
 						<div class="font-medium">{{ row.item_name }}</div>
 						<div class="text-sm text-gray-600">{{ __("Expected") }} {{ qty(row.expected_balance) }} {{ row.uom }}</div>
 					</div>
-					<div class="mt-2 grid grid-cols-2 gap-2">
+					<div v-if="data.editable" class="mt-2 grid grid-cols-2 gap-2">
 						<div>
 							<label class="label">{{ __("Returned") }}</label>
-							<input v-model.number="row.returned_qty" class="field" type="number" inputmode="decimal" min="0" :disabled="!data.editable" />
+							<input v-model.number="row.returned_qty" class="field" type="number" inputmode="decimal" min="0" />
 						</div>
 						<div>
 							<label class="label">{{ __("Damaged") }}</label>
-							<input v-model.number="row.damaged_qty" class="field" type="number" inputmode="decimal" min="0" :disabled="!data.editable" />
+							<input v-model.number="row.damaged_qty" class="field" type="number" inputmode="decimal" min="0" />
 						</div>
 					</div>
-					<div v-if="row.has_batch_no && row.damaged_qty > 0" class="mt-2">
+					<div v-else class="mt-1 text-sm text-gray-700">
+						{{ __("Returned") }} {{ qty(row.returned_qty) }} · {{ __("Damaged") }} {{ qty(row.damaged_qty) }}<span v-if="row.damaged_batch_no"> ({{ row.damaged_batch_no }})</span>
+					</div>
+					<div v-if="data.editable && row.has_batch_no && row.damaged_qty > 0" class="mt-2">
 						<label class="label">{{ __("Damaged batch (optional)") }}</label>
-						<select v-model="row.damaged_batch_no" class="field" :disabled="!data.editable">
+						<select v-model="row.damaged_batch_no" class="field">
 							<option :value="null">{{ __("Oldest first") }}</option>
 							<option v-for="b in batchesFor(row.item_code)" :key="b.batch_no" :value="b.batch_no">{{ b.batch_no }} ({{ qty(b.expected) }})</option>
 						</select>
@@ -57,9 +60,14 @@
 
 			<div class="card">
 				<div class="mb-2 font-semibold">{{ __("Cash") }}</div>
-				<div v-for="d in data.denominations" :key="d.denomination" class="flex items-center justify-between border-t border-gray-100 py-1.5 first:border-0">
+				<div
+					v-for="d in data.editable ? data.denominations : data.denominations.filter((x) => x.count)"
+					:key="d.denomination"
+					class="flex items-center justify-between border-t border-gray-100 py-1.5 first:border-0"
+				>
 					<span class="w-24">{{ money(d.denomination) }}</span>
-					<input v-model.number="d.count" class="field w-24 text-center" type="number" inputmode="numeric" min="0" :disabled="!data.editable" />
+					<input v-if="data.editable" v-model.number="d.count" class="field w-24 text-center" type="number" inputmode="numeric" min="0" />
+					<span v-else class="w-24 text-center">× {{ d.count }}</span>
 					<span class="w-28 text-right text-sm">{{ money(d.denomination * (d.count || 0)) }}</span>
 				</div>
 				<div class="mt-3 space-y-1 border-t border-gray-200 pt-2 text-sm">
@@ -73,6 +81,21 @@
 			</div>
 
 			<p v-if="message" class="card border-red-300 text-sm text-red-700">{{ message }}</p>
+			<div v-if="confirming" class="fixed inset-0 z-20 flex items-end justify-center bg-black/40 p-3 sm:items-center" role="dialog" aria-modal="true">
+				<div class="card w-full max-w-md space-y-3">
+					<div class="text-lg font-semibold">{{ __("Submit the settlement?") }}</div>
+					<ul v-if="data.warnings?.length" class="space-y-1 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
+						<li v-for="w in data.warnings" :key="w">⚠ {{ w }}</li>
+					</ul>
+					<p class="text-sm text-gray-600">
+						{{ data.warnings?.length ? __("This is recorded against you. Continue?") : __("You cannot change it afterwards.") }}
+					</p>
+					<div class="grid grid-cols-2 gap-2">
+						<button ref="cancelButton" class="btn-secondary" @click="confirming = false">{{ __("Cancel") }}</button>
+						<button class="btn-primary" :disabled="busy" @click="confirmSubmit">{{ __("Continue") }}</button>
+					</div>
+				</div>
+			</div>
 			<div v-if="data.editable" class="grid grid-cols-2 gap-2">
 				<button class="btn-secondary" :disabled="busy || !online" @click="save()">{{ __("Save") }}</button>
 				<button class="btn-primary" :disabled="busy || !online || hasExcess" @click="submitForVerification">
@@ -84,7 +107,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue"
+import { computed, nextTick, onMounted, ref } from "vue"
 import { call, m } from "../api"
 import { money, online, qty, session } from "../state"
 import { __ } from "../translation"
@@ -93,6 +116,8 @@ const trip = computed(() => session.ctx?.trip)
 const data = ref(null)
 const busy = ref(false)
 const message = ref("")
+const confirming = ref(false)
+const cancelButton = ref(null)
 
 const handed = computed(() => (data.value?.denominations || []).reduce((s, d) => s + d.denomination * (Number(d.count) || 0), 0))
 // Display only: the server recomputes expected cash and the variance on every save.
@@ -135,10 +160,18 @@ async function save() {
 	}
 }
 
+// Save first so the warnings (missing stock, cash variance) are the server's own numbers, then confirm.
 async function submitForVerification() {
 	if (busy.value) return // double-tap protection
-	if (!window.confirm(__("Submit the settlement? You cannot change it afterwards."))) return
 	if (!(await save())) return
+	confirming.value = true
+	await nextTick()
+	cancelButton.value?.focus() // default: Cancel
+}
+
+async function confirmSubmit() {
+	if (busy.value) return
+	confirming.value = false
 	busy.value = true
 	try {
 		data.value = await call(m("submit_settlement_for_verification"), { settlement_name: data.value.name })

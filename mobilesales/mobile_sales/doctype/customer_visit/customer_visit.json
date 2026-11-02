@@ -39,11 +39,19 @@
   "shelf_stock",
   "sale_section",
   "sale_items",
+  "additional_discount_percentage",
+  "discount_amount",
   "net_total",
   "total_taxes",
   "column_break_totals",
   "grand_total",
   "rounded_total",
+  "returns_section",
+  "return_items",
+  "return_total",
+  "column_break_returns",
+  "credit_applied",
+  "cash_due",
   "collection_section",
   "collect_amount",
   "collect_previous",
@@ -52,6 +60,8 @@
   "sales_invoice",
   "column_break_links",
   "payment_entry",
+  "credit_journal",
+  "credit_notes",
   "client_ref",
   "signature_section",
   "customer_signature",
@@ -145,7 +155,7 @@
    "fieldname": "outcome",
    "fieldtype": "Select",
    "label": "Outcome",
-   "options": "\nSale\nNo Sale\nCollection Only\nShop Closed",
+   "options": "\nSale\nNo Sale\nCollection Only\nShop Closed\nReturn Only",
    "reqd": 1,
    "in_list_view": 1,
    "in_standard_filter": 1
@@ -296,6 +306,17 @@
    "options": "Customer Visit Item"
   },
   {
+   "fieldname": "additional_discount_percentage",
+   "fieldtype": "Percent",
+   "label": "Invoice Discount %",
+   "description": "On Net Total. Enter this or Invoice Discount Amount"
+  },
+  {
+   "fieldname": "discount_amount",
+   "fieldtype": "Currency",
+   "label": "Invoice Discount Amount"
+  },
+  {
    "fieldname": "net_total",
    "fieldtype": "Currency",
    "label": "Net Total",
@@ -331,6 +352,42 @@
    "options": "Company:company:default_currency",
    "read_only": 1,
    "no_copy": 1
+  },
+  {
+   "fieldname": "returns_section",
+   "fieldtype": "Section Break",
+   "label": "Returns",
+   "collapsible": 1,
+   "depends_on": "eval:in_list(['Sale','Collection Only','Return Only'], doc.outcome)"
+  },
+  {
+   "fieldname": "return_items",
+   "fieldtype": "Table",
+   "label": "Return Items",
+   "options": "Customer Visit Return Item"
+  },
+  {
+   "fieldname": "return_total",
+   "fieldtype": "Currency",
+   "label": "Return Total",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_returns",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "credit_applied",
+   "fieldtype": "Currency",
+   "label": "Credit Applied",
+   "read_only": 1,
+   "description": "Return credit set off against invoices in this visit"
+  },
+  {
+   "fieldname": "cash_due",
+   "fieldtype": "Currency",
+   "label": "Cash Due",
+   "read_only": 1
   },
   {
    "fieldname": "collection_section",
@@ -386,6 +443,21 @@
    "allow_on_submit": 1
   },
   {
+   "fieldname": "credit_journal",
+   "fieldtype": "Link",
+   "label": "Credit Set-off Journal",
+   "options": "Journal Entry",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "credit_notes",
+   "fieldtype": "Small Text",
+   "label": "Credit Notes",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
    "fieldname": "client_ref",
    "fieldtype": "Data",
    "label": "Client Reference",
@@ -419,7 +491,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-02 12:00:00.000000",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Customer Visit",

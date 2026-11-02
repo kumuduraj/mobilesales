@@ -218,6 +218,8 @@ doc_events = {
 	"Delivery Note": {"validate": "mobilesales.overrides.guards.validate_delivery_note"},
 	"Stock Reconciliation": {"validate": "mobilesales.overrides.guards.validate_stock_reconciliation"},
 	"Stock Entry": {"validate": "mobilesales.overrides.guards.validate_stock_entry"},
+	"Purchase Receipt": {"validate": "mobilesales.overrides.guards.validate_purchase_receipt"},
+	"Purchase Invoice": {"validate": "mobilesales.overrides.guards.validate_purchase_receipt"},
 	"Payment Entry": {"validate": "mobilesales.overrides.guards.validate_payment_entry"},
 	"Journal Entry": {"validate": "mobilesales.overrides.guards.validate_journal_entry"},
 	"Warehouse": {

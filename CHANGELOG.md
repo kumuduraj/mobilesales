@@ -1,3 +1,38 @@
+## v0.6.0 — Phase 5b: Vehicles, discounts, customer returns
+
+- Mobile Vehicle (vehicle no., description, van warehouse, default driver, active): "Create Van Warehouse"
+  makes the van under the van group. Trips need a vehicle (default from the agent) and may name a helper;
+  one open trip per vehicle and per agent; the vehicle's van must be empty before loading. The agent keeps
+  the cash account; agent setup no longer creates a warehouse (Agent.van_warehouse is legacy data).
+  Patch: every agent's existing van becomes Mobile Vehicle VAN-01, VAN-02, … (active only if the agent is),
+  set as default vehicle and on the agent's old trips; it refuses to run while any trip is open.
+- Discounts: per line % or amount on top of the pricing-rule rate; invoice discount on Net Total. Cap: the
+  agent's manual discounts ÷ price-list value ≤ Max Discount % (pricing-rule discounts not counted). When a
+  pricing-rule line also gets a manual discount the invoice keeps the priced rates (Ignore Pricing Rule);
+  refused when that would drop a free-item offer.
+- Customer returns (Settings: Returns Enabled, Customer Return Warehouse, credit note series MB-SRET):
+  return lines on Sale / Collection Only and the new Return Only outcome (item, qty, against invoice,
+  reason from Mobile Return Reason, condition Resaleable / Damaged). One credit note per original invoice
+  (plus one without), into the customer return warehouse; batch items need the invoice and return the
+  batches sold on that line; rate = the original net rate, else the price list. Per-visit limit on the
+  agent (0 = supervisor only).
+- Credit set-off, never cash: one Credit Note Journal Entry (like ERPNext's Payment Reconciliation) applies
+  the credit to the returned invoice, today's sale and the selected previous invoices; the Payment Entry
+  covers only the rest. Leftover credit stays on the customer ("credit available" on the customer card).
+- Settlement: "Customer Returns Received" — the store keeper confirms received and damaged per item;
+  damaged → Return Damage (to the damage warehouse), missing → Return Shortage; good returns stay in the
+  customer return warehouse. Cancel reverses them. Mobile Settlement Sheet section.
+- Guards: mobile credit notes only into the customer return warehouse; stock into it only from them
+  (Stock Entry, Stock Reconciliation, Sales Invoice / Delivery Note returns, Purchase Receipt / Invoice);
+  stock out of it stays normal.
+- Phone app: vehicle and helper on Today; line / invoice discount; Returns step; credit applied and due;
+  credit-note prints; History shows returns. Settlement screen is read-only outside Draft, and Submit for
+  Verification first lists what will be recorded as missing and any cash short / over (Cancel focused).
+- Mobile Sales Supervisor: read on the visit masters (Customer, Item, UOM, Price List, Item Price, Batch,
+  Contact, Address, Territory, Customer Group) and select on Account, so supervisors can submit visits from
+  Desk (Custom DocPerm copies, drift-checked).
+- Tests: 106 (+ 35 SPA mount tests), incl. credit notes compared with ERPNext's make_sales_return.
+
 ## v0.5.0 — Phase 5: Mobile phone app
 
 - Phone app at /mobile-sales (Vue 3 + frappe-ui, installable PWA) for Mobile Sales Agents: Today (trip,

@@ -76,6 +76,33 @@ class TestMobileTrip(MobileSalesTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "already has an open trip"):
 			self.make_trip(submit=False)
 
+	def test_vehicle_rules(self):
+		vehicle_a = self.agent_a.default_vehicle
+		trip = self.make_trip(submit=False)
+		self.assertEqual((trip.vehicle, trip.van_warehouse), (vehicle_a, frappe.db.get_value("Mobile Vehicle", vehicle_a, "van_warehouse")))
+
+		# one open trip per vehicle: agent B cannot take agent A's van while A's trip is open
+		other = frappe.get_doc({"doctype": "Mobile Trip", "agent": self.agent_b.name, "vehicle": vehicle_a, "helper": "Kamal", "trip_date": nowdate(),
+			"load_items": [{"item_code": self.plain_item, "qty": 1}]})  # fmt: skip
+		with as_user(self.users.store), self.assertRaisesRegex(frappe.ValidationError, f"Vehicle .*{vehicle_a}.* already has an open trip"):
+			other.insert()
+		trip.delete()
+		with as_user(self.users.store):
+			other.insert()  # free again: agent B drives van A with a helper
+		self.assertEqual((other.van_warehouse, other.helper), (trip.van_warehouse, "Kamal"))
+		other.delete()
+
+		frappe.db.set_value("Mobile Vehicle", vehicle_a, "is_active", 0)
+		with self.assertRaisesRegex(frappe.ValidationError, "is not active"):
+			self.make_trip(submit=False)
+		bare = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": "_MS Test Bare Van"}).insert().name
+		with self.assertRaisesRegex(frappe.ValidationError, "has no van warehouse"):
+			frappe.get_doc({"doctype": "Mobile Trip", "agent": self.agent_a.name, "vehicle": bare, "trip_date": nowdate(),
+				"load_items": [{"item_code": self.plain_item, "qty": 1}]}).insert()  # fmt: skip
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "default_vehicle", None)
+		with self.assertRaisesRegex(frappe.ValidationError, "Select the Vehicle"):
+			self.make_trip(submit=False)
+
 	def test_inactive_agent_rejected(self):
 		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "is_active", 0)
 		with self.assertRaisesRegex(frappe.ValidationError, "is not active"):

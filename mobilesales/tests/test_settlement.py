@@ -444,3 +444,75 @@ class TestMobileSettlement(MobileSalesTestCase):
 		self.assertEqual(done.docstatus, 1)
 		with as_user(SUPERVISOR), self.assertRaisesRegex(frappe.ValidationError, "needs status"):
 			trip_service.reopen_trip(trip.name)
+
+	# Customer returns received (Phase 5b)
+
+	def test_customer_returns_received_damage_and_shortage(self):
+		trip = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]], end_day=False)
+		with as_user(self.agent_a.user):
+			visit = frappe.get_doc({
+				"doctype": "Customer Visit", "mobile_trip": trip.name, "customer": self.customer, "visit_datetime": now_datetime(),
+				"outcome": "Return Only", "return_items": [
+					{"item_code": self.plain_item, "qty": 2, "return_reason": "Unsold / Slow-moving", "condition": "Resaleable"},
+					{"item_code": self.plain_item, "qty": 1, "return_reason": "Damaged", "condition": "Damaged"},
+				],
+			}).insert()  # fmt: skip
+			visit.submit()
+			trip_service.end_day(trip.name)
+		returns_wh = self.customer_returns
+
+		def returns_qty():
+			return flt(frappe.db.get_value("Bin", {"warehouse": returns_wh, "item_code": self.plain_item}, "actual_qty"))
+
+		self.assertEqual(returns_qty(), 3)
+		draft = self.draft(trip, returned={self.plain_item: 3})
+		(line,) = draft.return_lines
+		self.assertEqual((line.credited_qty, line.credited_damaged_qty, line.received_qty, line.damaged_qty, line.missing_qty), (3, 1, 3, 1, 0))
+		self.assertEqual(draft.invoice_count, 1)  # the credit note is not a sale
+
+		# the agent cannot change return counts; the store keeper counts at Pending Store
+		frappe.set_user(self.agent_a.user)
+		doc = frappe.get_doc("Mobile Settlement", draft.name)
+		doc.return_lines[0].received_qty = 1
+		with self.assertRaisesRegex(frappe.PermissionError, "customer return counts"):
+			doc.save()
+		frappe.set_user("Administrator")
+		self.act(draft.name, "Submit for Verification", self.agent_a.user)
+		with as_user(STORE_KEEPER):
+			doc = frappe.get_doc("Mobile Settlement", draft.name)
+			doc.return_lines[0].received_qty = 2
+			doc.return_lines[0].damaged_qty = 3
+			doc.save()  # counts may be entered in any order; submit checks them
+			doc.reload()
+			doc.workflow_state = "Approved"
+			with self.assertRaisesRegex(frappe.ValidationError, "damaged 3.0 is more than received 2.0"):
+				settlement.before_submit(doc)
+			doc.reload()
+			doc.return_lines[0].received_qty = 2
+			doc.return_lines[0].damaged_qty = 1
+			doc.save()
+		doc.reload()
+		self.assertEqual((doc.return_lines[0].missing_qty, doc.return_lines[0].missing_value > 0), (1, True))
+		self.act(draft.name, "Verify Stock", STORE_KEEPER)
+		done = self.act(draft.name, "Verify Cash", CASHIER)
+		self.assertEqual(done.docstatus, 1)
+
+		self.assertEqual(self.se_rows(done.return_damage_entry), [(self.plain_item, 1, None)])
+		self.assertEqual(self.se_rows(done.return_shortage_entry), [(self.plain_item, 1, None)])
+		damage = frappe.get_doc("Stock Entry", done.return_damage_entry)
+		self.assertEqual((damage.mobile_purpose, damage.items[0].s_warehouse, damage.items[0].t_warehouse), ("Return Damage", returns_wh, self.damage_wh))
+		self.assertEqual(frappe.db.get_value("Stock Entry", done.return_shortage_entry, "mobile_purpose"), "Return Shortage")
+		self.assertEqual(returns_qty(), 1)  # the good return stays for the store
+		sheet = frappe.get_print("Mobile Settlement", done.name, print_format="Mobile Settlement Sheet")
+		self.assertIn("Customer Returns Received", sheet)
+		self.assertIn(done.return_shortage_entry, sheet)
+		purposes = [r.purpose for r in frappe.get_doc("Mobile Trip", trip.name).stock_entries]
+		self.assertIn("Return Damage", purposes)
+		self.assertIn("Return Shortage", purposes)
+
+		with as_user(SUPERVISOR):
+			frappe.get_doc("Mobile Settlement", done.name).cancel()
+		for name in (done.return_damage_entry, done.return_shortage_entry):
+			self.assertEqual(frappe.db.get_value("Stock Entry", name, "docstatus"), 2)
+		self.assertEqual(returns_qty(), 3)
+		self.assertEqual(frappe.db.get_value("Mobile Trip", trip.name, "status"), "Settling")

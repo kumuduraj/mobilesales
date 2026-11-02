@@ -28,23 +28,36 @@ def validate_trip(trip):
 	agent = frappe.db.get_value(
 		"Mobile Sales Agent",
 		trip.agent,
-		["is_active", "van_warehouse", "cash_account", "default_route"],
+		["is_active", "cash_account", "default_route", "default_vehicle"],
 		as_dict=True,
 	)
 	if not agent.is_active:
 		frappe.throw(_("Mobile Sales Agent {0} is not active.").format(frappe.bold(trip.agent)))
-	if not (agent.van_warehouse and agent.cash_account):
+	if not agent.cash_account:
 		frappe.throw(
-			_(
-				"Mobile Sales Agent {0} is not set up yet. Use 'Create Van Warehouse & Cash Account' "
-				"on the agent first."
-			).format(frappe.bold(trip.agent))
+			_("Mobile Sales Agent {0} is not set up yet. Use 'Create Cash Account' on the agent first.").format(
+				frappe.bold(trip.agent)
+			)
+		)
+	trip.vehicle = trip.vehicle or agent.default_vehicle
+	if not trip.vehicle:
+		frappe.throw(_("Select the Vehicle for this trip (or set a Default Vehicle on the agent)."))
+	vehicle = frappe.db.get_value("Mobile Vehicle", trip.vehicle, ["is_active", "van_warehouse"], as_dict=True)
+	if not vehicle:
+		frappe.throw(_("Mobile Vehicle {0} not found.").format(frappe.bold(trip.vehicle)))
+	if trip.docstatus == 0 and not vehicle.is_active:
+		frappe.throw(_("Mobile Vehicle {0} is not active.").format(frappe.bold(trip.vehicle)))
+	if not vehicle.van_warehouse:
+		frappe.throw(
+			_("Mobile Vehicle {0} has no van warehouse yet. Use 'Create Van Warehouse' on the vehicle first.").format(
+				frappe.bold(trip.vehicle)
+			)
 		)
 
 	if trip.docstatus == 0:
 		trip.status = "Draft"
 	trip.company = settings.company
-	trip.van_warehouse = agent.van_warehouse
+	trip.van_warehouse = vehicle.van_warehouse
 	trip.source_warehouse = trip.source_warehouse or settings.source_warehouse
 	trip.route = trip.route or agent.default_route
 	if not trip.source_warehouse:
@@ -59,23 +72,25 @@ def validate_trip(trip):
 
 
 def validate_single_open_trip(trip):
-	other = frappe.db.get_value(
-		"Mobile Trip",
-		{
-			"agent": trip.agent,
-			"name": ["!=", trip.name],
-			"docstatus": ["<", 2],
-			"status": ["not in", CLOSED_STATUSES],
-		},
-		"name",
-	)
-	if other:
-		frappe.throw(
-			_("Agent {0} already has an open trip {1}. Settle or cancel it first.").format(
-				frappe.bold(trip.agent), frappe.bold(other)
-			),
-			title=_("Open trip exists"),
+	"""One open trip per agent and one per vehicle (spec §3.6)."""
+	for fieldname, label in (("agent", _("Agent")), ("vehicle", _("Vehicle"))):
+		other = frappe.db.get_value(
+			"Mobile Trip",
+			{
+				fieldname: trip.get(fieldname),
+				"name": ["!=", trip.name],
+				"docstatus": ["<", 2],
+				"status": ["not in", CLOSED_STATUSES],
+			},
+			"name",
 		)
+		if other:
+			frappe.throw(
+				_("{0} {1} already has an open trip {2}. Settle or cancel it first.").format(
+					label, frappe.bold(trip.get(fieldname)), frappe.bold(other)
+				),
+				title=_("Open trip exists"),
+			)
 
 
 def before_submit(trip):
@@ -150,7 +165,7 @@ def update_trip_summary(trip_name):
 		"Customer Visit", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="outcome"
 	)
 	invoiced = frappe.get_all(
-		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="grand_total"
+		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1, "is_return": 0}, pluck="grand_total"
 	)
 	collected = frappe.get_all(
 		"Payment Entry", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="paid_amount"

@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "creation": "2026-11-02 16:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "name": "Mobile Settlement Return",
+ "field_order": [
+  "item_code",
+  "item_name",
+  "uom",
+  "has_batch_no",
+  "credited_qty",
+  "credited_damaged_qty",
+  "column_break_counts",
+  "received_qty",
+  "damaged_qty",
+  "missing_qty",
+  "valuation_rate",
+  "missing_value"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item",
+   "options": "Item",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "item_name",
+   "fieldtype": "Data",
+   "label": "Item Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "label": "UOM",
+   "options": "UOM",
+   "read_only": 1
+  },
+  {
+   "fieldname": "has_batch_no",
+   "fieldtype": "Check",
+   "label": "Has Batch No",
+   "read_only": 1
+  },
+  {
+   "fieldname": "credited_qty",
+   "fieldtype": "Float",
+   "label": "Credited Qty",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "credited_damaged_qty",
+   "fieldtype": "Float",
+   "label": "Damaged per Agent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "label": "Received Qty",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "damaged_qty",
+   "fieldtype": "Float",
+   "label": "Damaged Qty",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "missing_qty",
+   "fieldtype": "Float",
+   "label": "Missing Qty",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "valuation_rate",
+   "fieldtype": "Currency",
+   "label": "Valuation Rate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "missing_value",
+   "fieldtype": "Currency",
+   "label": "Missing Value",
+   "read_only": 1,
+   "in_list_view": 1
+  }
+ ],
+ "modified": "2026-11-02 16:00:00.000000"
+}

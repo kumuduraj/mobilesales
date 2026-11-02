@@ -8,7 +8,7 @@ from frappe import _
 from frappe.utils import flt, get_datetime, getdate
 
 from mobilesales.overrides.permissions import COLLECTABLE_FLAG
-from mobilesales.services import customer_update, invoicing, stock
+from mobilesales.services import customer_update, invoicing, returns, stock
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
 
@@ -49,11 +49,14 @@ def validate_visit(visit):
 
 	validate_outcome(visit)
 	validate_collections(visit)
+	payable = 0.0
 	if visit.outcome == "Sale":
-		validate_sale(visit, trip, agent, settings)
+		payable = validate_sale(visit, trip, agent, settings)
 	else:
-		for fieldname in ("net_total", "total_taxes", "grand_total", "rounded_total", "collect_amount"):
+		for fieldname in ("net_total", "total_taxes", "grand_total", "rounded_total", "collect_amount", "discount_amount", "additional_discount_percentage"):
 			visit.set(fieldname, 0)
+	notes = returns.validate_returns(visit, agent, settings)
+	validate_money(visit, agent, settings, payable, returns.plan_set_off(visit, notes, payable))
 	visit.total_collected = flt(visit.collect_amount) + sum(flt(r.allocated) for r in visit.collect_previous)
 	customer_update.capture_changes(visit)
 
@@ -70,15 +73,15 @@ def validate_outcome(visit):
 			frappe.throw(_("Remarks are required for reason {0}.").format(frappe.bold(visit.no_sale_reason)))
 		if visit.sale_items:
 			frappe.throw(_("Remove the sale items: outcome {0} cannot have a sale.").format(_(visit.outcome)))
+		if visit.get("return_items"):
+			frappe.throw(_("Remove the return lines: outcome {0} cannot take returns.").format(_(visit.outcome)))
 		if flt(visit.collect_amount) or any(flt(r.allocated) for r in visit.collect_previous):
 			frappe.throw(
 				_("Outcome {0} cannot collect money. Use Collection Only or Sale.").format(_(visit.outcome))
 			)
-	elif visit.outcome == "Collection Only":
+	elif visit.outcome in ("Collection Only", "Return Only"):
 		if visit.sale_items:
-			frappe.throw(_("Remove the sale items: outcome Collection Only has no sale."))
-		if not any(flt(r.allocated) > 0 for r in visit.collect_previous):
-			frappe.throw(_("Collection Only needs at least one previous invoice with an allocated amount."))
+			frappe.throw(_("Remove the sale items: outcome {0} has no sale.").format(_(visit.outcome)))
 	elif visit.outcome == "Sale":
 		if not visit.sale_items:
 			frappe.throw(_("Add at least one item for a Sale."))
@@ -120,18 +123,16 @@ def validate_collections(visit):
 
 
 def validate_sale(visit, trip, agent, settings):
-	max_discount = flt(agent.max_discount_pct)
 	for row in visit.sale_items:
 		if flt(row.qty) <= 0:
 			frappe.throw(_("Row {0}: Qty must be greater than 0.").format(row.idx))
-		if flt(row.discount_percentage) > max_discount:
-			frappe.throw(
-				_("Row {0}: Discount {1}% is above your limit of {2}%.").format(
-					row.idx, flt(row.discount_percentage), max_discount
-				)
-			)
+		if flt(row.discount_percentage) < 0 or flt(row.get("discount_amount")) < 0:
+			frappe.throw(_("Row {0}: a discount cannot be negative.").format(row.idx))
+	if flt(visit.get("discount_amount")) < 0 or not 0 <= flt(visit.get("additional_discount_percentage")) <= 100:
+		frappe.throw(_("The invoice discount is not valid."))
 
 	si = invoicing.build_invoice(visit, save=False)
+	invoicing.check_discount_cap(si, agent.max_discount_pct)
 	invoicing.copy_invoice_to_visit(visit, si)
 
 	needed = _needed_stock(visit)
@@ -139,29 +140,54 @@ def validate_sale(visit, trip, agent, settings):
 	for row in visit.sale_items:
 		row.available_in_van = flt(available.get(row.item_code))
 	_check_van_stock(trip.van_warehouse, needed, available)
+	return flt(visit.rounded_total)
 
-	payable = flt(visit.rounded_total)
-	collect = flt(visit.collect_amount)
+
+def validate_money(visit, agent, settings, payable, plan):
+	"""Cash rules after the return credit (spec §4.5): credit is set off first, cash covers the rest."""
+	credit = returns.credit_by_target(plan)
+	visit.credit_applied = flt(sum(credit.values()), visit.precision("credit_applied"))
 	precision = visit.precision("collect_amount")
-	if collect < 0 or flt(collect, precision) > flt(payable, precision):
-		frappe.throw(_("Collect Now must be between 0 and the invoice total {0}.").format(payable))
-	if not settings.allow_credit_sales:
-		if flt(collect, precision) != flt(payable, precision):
+	due_on_sale = flt(payable - credit.get(returns.SALE, 0), precision)
+	cash_due = due_on_sale
+	for row in visit.collect_previous:
+		after_credit = flt(flt(row.outstanding) - credit.get(row.sales_invoice, 0), precision)
+		cash_due += after_credit
+		if flt(row.allocated, precision) > after_credit:
 			frappe.throw(
-				_("Credit sales are not allowed: collect the full invoice total {0}.").format(payable),
+				_("Row {0}: Allocated {1} is more than the {2} still due on {3} after the return credit.").format(
+					row.idx, flt(row.allocated), after_credit, frappe.bold(row.sales_invoice)
+				),
+				title=_("Over allocation"),
+			)
+	visit.cash_due = flt(cash_due, precision)
+
+	if visit.outcome == "Collection Only" and not (
+		any(flt(r.allocated) > 0 for r in visit.collect_previous) or visit.credit_applied
+	):
+		frappe.throw(_("Collection Only needs at least one previous invoice with an allocated amount."))
+	if visit.outcome != "Sale":
+		return
+	collect = flt(visit.collect_amount)
+	if collect < 0 or flt(collect, precision) > due_on_sale:
+		frappe.throw(_("Collect Now must be between 0 and the {0} still due on the invoice.").format(due_on_sale))
+	if not settings.allow_credit_sales:
+		if flt(collect, precision) != due_on_sale:
+			frappe.throw(
+				_("Credit sales are not allowed: collect the full {0} due on the invoice.").format(due_on_sale),
 				title=_("Cash sale only"),
 			)
-	elif flt(payable - collect, precision) > flt(agent.credit_limit_per_invoice, precision):
+	elif flt(due_on_sale - collect, precision) > flt(agent.credit_limit_per_invoice, precision):
 		frappe.throw(
 			_("Credit of {0} is above your per-invoice credit limit of {1}.").format(
-				flt(payable - collect, precision), flt(agent.credit_limit_per_invoice)
+				flt(due_on_sale - collect, precision), flt(agent.credit_limit_per_invoice)
 			),
 			title=_("Credit limit"),
 		)
 
 
 def on_submit(visit):
-	trip, _agent = invoicing.get_visit_context(visit)
+	trip, agent = invoicing.get_visit_context(visit)
 	settings = ms_settings.get_settings()
 
 	si = None
@@ -181,11 +207,20 @@ def on_submit(visit):
 
 	# ERPNext re-reads every referenced invoice as the session user; an agent may not read standard or
 	# other trips' invoices, so open exactly the ones this visit validated, for this request only.
-	collectable = {row.sales_invoice for row in visit.collect_previous if flt(row.allocated) > 0}
+	collectable = {row.sales_invoice for row in visit.collect_previous if row.sales_invoice}
+	collectable.update(row.against_invoice for row in visit.return_items if row.against_invoice)
 	if si:
 		collectable.add(si.name)
 	frappe.flags[COLLECTABLE_FLAG] = frozenset(collectable)
 	try:
+		notes = returns.build_credit_notes(visit, agent, settings, save=True) if visit.return_items else []
+		if notes:
+			frappe.flags[COLLECTABLE_FLAG] = frozenset(collectable | {n.name for n in notes})
+			visit.db_set("credit_notes", ", ".join(n.name for n in notes))
+			plan = returns.plan_set_off(visit, notes, invoicing.payable_amount(si) if si else 0, si and si.name)
+			je = returns.make_set_off_journal(visit, notes, plan, si and si.name)
+			if je:
+				visit.db_set("credit_journal", je.name)
 		pe = invoicing.make_payment_entry(visit, si)
 	finally:
 		frappe.flags[COLLECTABLE_FLAG] = None
@@ -202,8 +237,11 @@ def before_cancel(visit):
 
 
 def on_cancel(visit):
-	"""Payment Entry first, then the Sales Invoice (stock returns to the van)."""
-	for doctype, name in (("Payment Entry", visit.payment_entry), ("Sales Invoice", visit.sales_invoice)):
+	"""Payment Entry, set-off Journal Entry, credit notes, then the Sales Invoice (stock returns to the van)."""
+	credit_notes = [n.strip() for n in (visit.credit_notes or "").split(",") if n.strip()]
+	chain = [("Payment Entry", visit.payment_entry), ("Journal Entry", visit.credit_journal)]
+	chain += [("Sales Invoice", name) for name in credit_notes] + [("Sales Invoice", visit.sales_invoice)]
+	for doctype, name in chain:
 		if not name:
 			continue
 		doc = frappe.get_doc(doctype, name)

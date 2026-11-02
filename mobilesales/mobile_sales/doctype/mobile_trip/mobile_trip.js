@@ -6,6 +6,7 @@ const TRIP_METHOD = "mobilesales.services.trip.";
 frappe.ui.form.on("Mobile Trip", {
 	setup(frm) {
 		frm.set_query("agent", () => ({ filters: { is_active: 1 } }));
+		frm.set_query("vehicle", () => ({ filters: { is_active: 1, van_warehouse: ["is", "set"] } }));
 		frm.set_query("source_warehouse", () => ({
 			filters: { company: frm.doc.company, is_group: 0 },
 		}));

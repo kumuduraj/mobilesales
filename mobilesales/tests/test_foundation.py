@@ -13,7 +13,7 @@ from frappe.utils import cint, nowdate
 from frappe.utils.nestedset import get_root_of
 
 from mobilesales.overrides import guards, permissions
-from mobilesales.services import agent_setup
+from mobilesales.services import agent_setup, vehicles
 from mobilesales.tests.utils import ROLE_USERS, as_user, make_role_users
 
 PREFIX = "_MS Test"
@@ -26,6 +26,7 @@ COUNTED_DOCTYPES = (
 	"User Permission",
 	"User",
 	"Mobile Sales Agent",
+	"Mobile Vehicle",
 	"Item",
 	"Customer",
 	"Sales Invoice",
@@ -185,8 +186,10 @@ class TestFoundation(IntegrationTestCase):
 			.insert()
 			.name
 		)
+		cls.vehicle = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN"}).insert().name
 		with as_user(cls.users.supervisor):
 			cls.setup_result = agent_setup.setup_agent(cls.agent)
+			cls.van_warehouse = vehicles.setup_vehicle(cls.vehicle)
 
 	@classmethod
 	def tearDownClass(cls):
@@ -245,7 +248,7 @@ class TestFoundation(IntegrationTestCase):
 
 	@property
 	def van(self):
-		return self.setup_result["van_warehouse"]
+		return self.van_warehouse
 
 	# 1
 	def test_standard_sales_invoice_unaffected(self):
@@ -313,7 +316,7 @@ class TestFoundation(IntegrationTestCase):
 	# 6
 	def test_setup_agent_is_idempotent(self):
 		first = self.setup_result
-		self.assertTrue(frappe.db.exists("Warehouse", {"name": first["van_warehouse"], "parent_warehouse": self.van_group}))
+		self.assertNotIn("van_warehouse", first)  # the van belongs to the vehicle (v0.6.0)
 		self.assertEqual(frappe.db.get_value("Account", first["cash_account"], "account_type"), "Cash")
 		self.assertEqual(
 			frappe.db.get_value(
@@ -339,6 +342,60 @@ class TestFoundation(IntegrationTestCase):
 			),
 			len(agent_setup.SCOPED_DOCTYPES),
 		)
+
+	def test_setup_vehicle_creates_van_once(self):
+		self.assertTrue(frappe.db.exists("Warehouse", {"name": self.van, "parent_warehouse": self.van_group, "is_group": 0}))
+		self.assertEqual(self.van, f"{PREFIX} VAN Van - {frappe.get_cached_value('Company', self.company, 'abbr')}")
+		counts = _counts()
+		with as_user(self.users.supervisor):
+			self.assertEqual(vehicles.setup_vehicle(self.vehicle), self.van)
+		self.assertEqual(counts, _counts())
+		for user in (self.users.office, self.users.store, TEST_USER):
+			with as_user(user), self.assertRaises(frappe.PermissionError):
+				vehicles.setup_vehicle(self.vehicle)
+		other = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN 2", "van_warehouse": self.van})
+		with self.assertRaisesRegex(frappe.ValidationError, "already belongs to vehicle"):
+			other.insert()
+
+	def test_vehicle_legacy_patch(self):
+		from mobilesales.patches.v0_6 import create_vehicles_from_agent_vans as legacy
+
+		legacy_van = _warehouse(f"{PREFIX} Legacy Van", self.van_group, self.company)
+		frappe.db.set_value("Mobile Sales Agent", self.agent, {"van_warehouse": legacy_van, "default_vehicle": None})
+
+		def old_trip(name, status):
+			trip = frappe.new_doc("Mobile Trip")  # trips from before v0.6.0: no vehicle
+			trip.update({"name": name, "agent": self.agent, "trip_date": nowdate(), "company": self.company, "status": status,
+				"docstatus": 1, "van_warehouse": legacy_van, "source_warehouse": self.store})  # fmt: skip
+			trip.db_insert()
+			return name
+
+		settled = old_trip(f"{PREFIX} OLD-1", "Settled")
+		open_trip = old_trip(f"{PREFIX} OLD-2", "In Field")
+		with self.assertRaisesRegex(frappe.ValidationError, f"settle or cancel every Mobile Trip first. Open: .*{open_trip} \\(In Field\\)"):
+			legacy.execute()
+		self.assertFalse(frappe.db.exists("Mobile Vehicle", {"van_warehouse": legacy_van}))
+
+		frappe.db.set_value("Mobile Trip", open_trip, "status", "Settled")
+		expected_no = legacy.next_vehicle_no()
+		legacy.execute()
+		vehicle = frappe.get_doc("Mobile Vehicle", {"van_warehouse": legacy_van})
+		self.assertEqual((vehicle.name, vehicle.is_active), (expected_no, 1))
+		self.assertRegex(vehicle.name, r"^VAN-\d{2}$")
+		agent = frappe.db.get_value("Mobile Sales Agent", self.agent, ["van_warehouse", "default_vehicle"], as_dict=True)
+		self.assertEqual((agent.van_warehouse, agent.default_vehicle), (legacy_van, vehicle.name))  # legacy field kept
+		self.assertEqual({frappe.db.get_value("Mobile Trip", t, "vehicle") for t in (settled, open_trip)}, {vehicle.name})
+		self.assertIn(legacy_van, guards.build_guard_context()["vans"])  # still a guarded van
+
+		counts = (frappe.db.count("Mobile Vehicle"), _counts())
+		legacy.execute()  # idempotent
+		self.assertEqual(counts, (frappe.db.count("Mobile Vehicle"), _counts()))
+
+		# an inactive (old) agent's van becomes an inactive vehicle
+		frappe.db.delete("Mobile Vehicle", vehicle.name)
+		frappe.db.set_value("Mobile Sales Agent", self.agent, {"is_active": 0, "default_vehicle": None})
+		legacy.execute()
+		self.assertEqual(frappe.db.get_value("Mobile Vehicle", {"van_warehouse": legacy_van}, "is_active"), 0)
 
 	def test_setup_agent_needs_supervisor(self):
 		for user in (self.users.office, self.users.store, TEST_USER):

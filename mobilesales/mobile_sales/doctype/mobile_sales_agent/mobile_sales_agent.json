@@ -13,8 +13,10 @@
   "is_active",
   "selling_price_list",
   "default_route",
+  "default_vehicle",
   "max_discount_pct",
   "credit_limit_per_invoice",
+  "max_return_value_per_visit",
   "van_cash_section",
   "van_warehouse",
   "cash_account",
@@ -78,6 +80,12 @@
    "options": "Mobile Route"
   },
   {
+   "fieldname": "default_vehicle",
+   "fieldtype": "Link",
+   "label": "Default Vehicle",
+   "options": "Mobile Vehicle"
+  },
+  {
    "fieldname": "max_discount_pct",
    "fieldtype": "Percent",
    "label": "Max Discount %"
@@ -89,17 +97,24 @@
    "description": "0 = cash only"
   },
   {
+   "fieldname": "max_return_value_per_visit",
+   "fieldtype": "Currency",
+   "label": "Max Return Value per Visit",
+   "description": "0 = the agent cannot take returns (supervisor only)"
+  },
+  {
    "fieldname": "van_cash_section",
    "fieldtype": "Section Break",
-   "label": "Van and Cash",
+   "label": "Cash",
    "description": "Created by the button Create Van Warehouse & Cash Account"
   },
   {
    "fieldname": "van_warehouse",
    "fieldtype": "Link",
-   "label": "Van Warehouse",
+   "label": "Van Warehouse (legacy)",
    "options": "Warehouse",
-   "read_only": 1
+   "read_only": 1,
+   "description": "Before vehicles (v0.6.0). The van now belongs to the Mobile Vehicle."
   },
   {
    "fieldname": "cash_account",
@@ -122,7 +137,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-02 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Agent",

@@ -10,6 +10,8 @@
   "agent_user",
   "trip_date",
   "route",
+  "vehicle",
+  "helper",
   "column_break_main",
   "status",
   "company",
@@ -77,6 +79,20 @@
    "options": "Mobile Route"
   },
   {
+   "fieldname": "vehicle",
+   "fieldtype": "Link",
+   "label": "Vehicle",
+   "options": "Mobile Vehicle",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "helper",
+   "fieldtype": "Data",
+   "label": "Helper"
+  },
+  {
    "fieldname": "column_break_main",
    "fieldtype": "Column Break"
   },
@@ -105,7 +121,8 @@
    "fieldtype": "Link",
    "label": "Van Warehouse",
    "options": "Warehouse",
-   "read_only": 1
+   "read_only": 1,
+   "description": "The vehicle's van"
   },
   {
    "fieldname": "source_warehouse",
@@ -248,7 +265,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 13:00:00.000000",
+ "modified": "2026-11-02 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Trip",

@@ -34,6 +34,8 @@
   "stock_variance_value",
   "batch_section",
   "batch_lines",
+  "customer_returns_section",
+  "return_lines",
   "cash_section",
   "opening_cash_float",
   "expected_cash",
@@ -54,6 +56,8 @@
   "return_entry",
   "damage_entry",
   "shortage_entry",
+  "return_damage_entry",
+  "return_shortage_entry",
   "column_break_postings",
   "recovery_journal",
   "cash_journal",
@@ -277,6 +281,18 @@
    "no_copy": 1
   },
   {
+   "fieldname": "customer_returns_section",
+   "fieldtype": "Section Break",
+   "label": "Customer Returns Received"
+  },
+  {
+   "fieldname": "return_lines",
+   "fieldtype": "Table",
+   "label": "Customer Returns",
+   "options": "Mobile Settlement Return",
+   "no_copy": 1
+  },
+  {
    "fieldname": "cash_section",
    "fieldtype": "Section Break",
    "label": "Cash"
@@ -416,6 +432,24 @@
    "allow_on_submit": 1
   },
   {
+   "fieldname": "return_damage_entry",
+   "fieldtype": "Link",
+   "label": "Return Damage Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
+   "fieldname": "return_shortage_entry",
+   "fieldtype": "Link",
+   "label": "Return Shortage Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "no_copy": 1,
+   "allow_on_submit": 1
+  },
+  {
    "fieldname": "column_break_postings",
    "fieldtype": "Column Break"
   },
@@ -460,7 +494,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 14:00:00.000000",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Settlement",

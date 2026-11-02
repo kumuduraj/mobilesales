@@ -20,6 +20,8 @@ class MobileSalesAgent(Document):
 			frappe.throw(_("Max Discount % must be between 0 and 100."))
 		if flt(self.credit_limit_per_invoice) < 0:
 			frappe.throw(_("Credit Limit per Invoice cannot be negative."))
+		if flt(self.max_return_value_per_visit) < 0:
+			frappe.throw(_("Max Return Value per Visit cannot be negative."))
 
 	def on_update(self):
 		clear_guard_cache()

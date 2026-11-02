@@ -142,7 +142,7 @@ class TestMobileAPI(MobileSalesTestCase):
 		self.assertEqual(set(boot), {"csrf_token", "site_name", "lang", "translations", "context"})
 		self.assertEqual(boot["translations"], {})  # English: no Desk message set in the page
 		self.assertEqual(
-			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "denominations"}
+			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "return_reasons", "denominations"}
 		)
 		self.assertIn("window.ms_fail", html)  # on-screen "App failed to load" instead of a blank page
 		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
@@ -328,8 +328,15 @@ class TestMobileAPI(MobileSalesTestCase):
 			draft = api.get_settlement_draft(trip.name)
 			self.assertEqual((draft["name"], draft["editable"], draft["stock_lines"][0]["expected_balance"]), (None, True, 3))
 			counts = [{"denomination": 100, "count": 2}]
+			# Returned 0 writes the whole van off: the app gets the warnings to confirm first
+			careless = api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 0}], "denominations": [{"denomination": 100, "count": 1}]})
+			item_name = frappe.db.get_value("Item", self.plain_item, "item_name")
+			self.assertEqual(len(careless["warnings"]), 2)
+			self.assertIn(f"3 Nos {item_name} will be recorded as MISSING", careless["warnings"][0])
+			self.assertIn("Cash is SHORT by", careless["warnings"][1])
 			saved = api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 3}], "denominations": counts})
 			self.assertTrue(saved["name"])
+			self.assertEqual(saved["warnings"], [])
 			self.assertEqual((saved["cash_handed_over"], saved["cash_variance"], saved["workflow_state"]), (200, 0, "Draft"))
 			submitted = api.submit_settlement_for_verification(saved["name"])
 			self.assertEqual((submitted["workflow_state"], submitted["editable"]), ("Pending Store", False))

@@ -16,11 +16,11 @@ Build a new Frappe app `mobile_sales` (module **Mobile Sales**) on ERPNext v16 t
 - Ledgers are the source of truth. Reconciliation reads Stock Ledger Entry and GL Entry, never denormalised counters.
 - One open Mobile Trip per agent at a time.
 
-**Out of scope (phase 2 candidates):** full offline sync, customer sales returns from the van, GPS route tracking between visits, multi-currency.
+**Out of scope (phase 2 candidates):** full offline sync, GPS route tracking between visits, multi-currency. (Customer returns moved into Phase 5b, §4.5.)
 
 ## 2. Architecture
 
-Each agent gets a dedicated van warehouse and a dedicated cash-in-hand ledger; mobile stock and cash can only move through documents tagged with a Mobile Trip, so the main store, main cash and standard sales never mix with field activity.
+Each vehicle gets a dedicated van warehouse (§3.6) and each agent a dedicated cash-in-hand ledger; mobile stock and cash can only move through documents tagged with a Mobile Trip, so the main store, main cash and standard sales never mix with field activity.
 
 Flow: Mobile Trip (Stock Entry store → van) → Customer Visit (GPS, details, shelf qty) → Sale? yes → Sales Invoice (update_stock from van) → Payment Entry (into agent cash ledger) → next customer; no → No-sale visit (reason, no invoice) → next customer. End of day: Mobile Trip → Mobile Settlement (reconcile stock + cash) → on approval → Ledger postings (Stock Entries for returns, Journal Entries for cash).
 
@@ -63,6 +63,9 @@ Five small masters plus a per-agent warehouse and cash ledger. All created once 
 | default_tax_template | Link Sales Taxes and Charges Template | Applied on mobile invoices |
 | agent_cash_parent_account | Link Account (group, Cash) | Parent for auto-created agent cash ledgers |
 | sales_person_parent | Link Sales Person (group) | Parent for auto-created Sales Persons |
+| returns_enabled | Check | Customer returns from the van (§4.5) on/off |
+| customer_return_warehouse | Link Warehouse (leaf, not under the van group) | Where customer returns land (credit notes, `update_stock`); e.g. `Customer Returns - XX`. Required when returns_enabled |
+| sret_naming_series | Data | Credit note series, e.g. `MB-SRET-.YY.-.#####` (added as a Sales Invoice series option, default unchanged) |
 
 ### 3.2 Mobile Sales Agent
 
@@ -73,16 +76,18 @@ One record per field salesperson. Autoname `MSA-.####`.
 | user | Link User (unique) | Login used on the device |
 | employee | Link Employee | For shortage recovery |
 | sales_person | Link Sales Person | Written into `sales_team` for commission |
-| van_warehouse | Link Warehouse (read only) | Auto-created under van group |
+| van_warehouse | Link Warehouse (read only) | **Legacy** (Phase 5b): kept for history; the van belongs to the vehicle (§3.6) |
+| default_vehicle | Link Mobile Vehicle | Default for new trips |
 | cash_account | Link Account (read only) | Auto-created `Cash in Hand - <agent>` under Cash In Hand |
 | mode_of_payment | Link Mode of Payment | Agent-specific MoP whose company account = cash_account |
 | selling_price_list | Link Price List | |
 | default_route | Link Mobile Route | |
-| max_discount_pct | Percent | Line discount ceiling |
+| max_discount_pct | Percent | Ceiling of the agent's total manual discount (lines + invoice) vs the price-list value, §5.1 |
+| max_return_value_per_visit | Currency | Credit notes of one visit above this need a Supervisor; 0 = agent cannot take returns |
 | credit_limit_per_invoice | Currency | 0 = cash only |
 | is_active | Check | |
 
-**Setup button** `Create Van Warehouse & Cash Account`: creates Warehouse, Account, Mode of Payment row, and a User Permission (user → own Mobile Sales Agent, apply to all doctypes = off, applicable_for Mobile Trip / Customer Visit / Mobile Settlement).
+**Setup button** `Create Cash Account` (was `Create Van Warehouse & Cash Account`; the van warehouse moved to the vehicle): creates Account, Mode of Payment row, and a User Permission (user → own Mobile Sales Agent, apply to all doctypes = off, applicable_for Mobile Trip / Customer Visit / Mobile Settlement).
 
 ### 3.3 Mobile Route
 
@@ -94,10 +99,35 @@ Simple master: `reason` (Data, unique), `category` Select (Stock Sufficient / Pr
 
 ### 3.5 Accounts and warehouses to seed
 
-- Warehouse group `Mobile Vans - XX`; one leaf per agent.
+- Warehouse group `Mobile Vans - XX`; one leaf per vehicle.
 - Warehouse `Damaged Returns - XX`.
+- Warehouse `Customer Returns - XX` (leaf, outside the van group) when returns are enabled.
 - Accounts: `Cash in Hand - <agent>` (Cash, per agent), `Mobile Stock Shortage` (Expense), `Mobile Cash Shortage / Excess` (Expense).
 - Stock Settings: `allow_negative_stock` must stay off; the app also validates van stock itself.
+
+### 3.6 Mobile Vehicle (Phase 5b)
+
+One record per van. Autoname `field:vehicle_no`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| vehicle_no | Data (unique) | Registration / fleet number, e.g. `VAN-01` |
+| description | Data | |
+| van_warehouse | Link Warehouse (read only) | Auto-created `<vehicle_no> Van - XX` under van_warehouse_group by the setup button |
+| default_driver | Data | Optional, informational |
+| is_active | Check | Inactive vehicles cannot start trips |
+
+**Setup button** `Create Van Warehouse` (Supervisor / System Manager): creates the warehouse, idempotent.
+
+Rules: a vehicle's van must be empty before a trip loads it; one open trip per vehicle and one per agent. The agent keeps the cash account (cash is personal, the van is not). Guards keep treating **every leaf under van_warehouse_group as a van**, whether linked to a vehicle, a legacy agent or nothing.
+
+**Legacy patch** (refuses to run, with a clear message, while any Mobile Trip is not Settled or Cancelled): for each agent with a van_warehouse, create Mobile Vehicle `VAN-01`, `VAN-02`, … (agent order) whose van_warehouse is that existing warehouse (no stock or warehouse moved), set agent.default_vehicle, and set `vehicle` on that agent's historic trips. Agent.van_warehouse stays as data. Idempotent (a warehouse already linked to a vehicle is skipped). The vehicle is active only if the agent is (old test agents stay inactive).
+
+Agents read Mobile Vehicle (the trip and Today screen show it); Supervisor full; Store Keeper read.
+
+### 3.7 Mobile Return Reason (Phase 5b)
+
+`reason` (Data, unique), `requires_remark` Check. Seeded on install / migrate: Damaged, Expired, Unsold / Slow-moving, Wrong Item, Other (requires remark).
 
 ## 4. Core DocTypes
 
@@ -113,7 +143,9 @@ Three submittable DocTypes carry the process: **Mobile Trip** (one agent-day), *
 | trip_date | Date | reqd, default Today |
 | company | Link Company | from Settings |
 | route | Link Mobile Route | default from agent |
-| van_warehouse | Link Warehouse | fetch from agent, read only |
+| vehicle | Link Mobile Vehicle | reqd (Phase 5b), default agent.default_vehicle, active only |
+| helper | Data | optional second person on the van |
+| van_warehouse | Link Warehouse | = vehicle.van_warehouse, read only |
 | source_warehouse | Link Warehouse | default from Settings |
 | opening_cash_float | Currency | Change given to agent; posted by JE main cash → agent cash |
 | status | Select | Draft / Loaded / In Field / Settling / Settled / Cancelled (read only, set by code) |
@@ -122,7 +154,7 @@ Three submittable DocTypes carry the process: **Mobile Trip** (one agent-day), *
 | settlement | Link Mobile Settlement | read only |
 | summary section (read only, refreshed on demand) | Int/Currency | visits, sales_visits, no_sale_visits, invoices, invoiced_amount, collected_amount |
 
-On **submit**: creates Stock Entry (Material Transfer, source → van) from `load_items`, `mobile_trip` set, submitted; status → Loaded. Agent taps **Start Trip** → In Field. Button **Top-up Load** (Supervisor) opens a dialog of items/qty and creates another Material Transfer. Validation: van warehouse must hold zero stock before first issue (previous trip fully settled).
+On **submit**: creates Stock Entry (Material Transfer, source → van) from `load_items`, `mobile_trip` set, submitted; status → Loaded. Agent taps **Start Trip** → In Field. Button **Top-up Load** (Supervisor) opens a dialog of items/qty and creates another Material Transfer. Validation: van warehouse must hold zero stock before first issue (previous trip fully settled); one open trip per agent and per vehicle (§3.6).
 
 ### 4.2 Customer Visit (submittable, `CV-.YY.-.######`)
 
@@ -135,18 +167,25 @@ On **submit**: creates Stock Entry (Material Transfer, source → van) from `loa
 | visit_datetime | Datetime | default now |
 | latitude / longitude | Float | captured by device |
 | check_in_photo | Attach Image | optional |
-| outcome | Select | Sale / No Sale / Collection Only / Shop Closed |
+| outcome | Select | Sale / No Sale / Collection Only / Shop Closed / Return Only (Phase 5b) |
 | no_sale_reason | Link Visit No Sale Reason | shown and mandatory for outcome No Sale only; hidden and cleared for Shop Closed |
 | remarks | Small Text | mandatory if reason.requires_remark (No Sale); optional for Shop Closed |
 | **Customer update** section | | `update_customer` Check; `new_customer_name`, `new_mobile_no`, `new_email`, `new_address_line1`, `new_city`, `new_contact_person`, `new_tax_id` |
 | customer_update_status | Select | Not Requested / Applied / Pending Approval / Rejected |
 | shelf_stock | Table **Customer Visit Shelf Stock** | item_code, qty_on_shelf, uom, expiry_date, competitor_item (Data), remarks |
-| sale_items | Table **Customer Visit Item** | item_code, uom, qty, price_list_rate, discount_percentage, rate, amount, available_in_van (read only) |
+| sale_items | Table **Customer Visit Item** | item_code, uom, qty, price_list_rate, discount_percentage, discount_amount (Phase 5b: enter one, the other is computed), rate, amount, available_in_van (read only) |
+| additional_discount_percentage / discount_amount | Percent / Currency | Phase 5b: optional invoice-level discount on **Net Total** (enter one); copied to the Sales Invoice fields of the same name with `apply_discount_on = Net Total` |
 | net_total / taxes / grand_total | Currency | computed client + server via a draft Sales Invoice `run_method('calculate_taxes_and_totals')`, so pricing rules and schemes match ERPNext exactly |
 | collect_amount | Currency | collected now against this invoice |
 | collect_previous | Table **Customer Visit Collection** | sales_invoice (outstanding of this customer), outstanding, allocated |
 | total_collected | Currency | computed |
+| **Returns** section (Phase 5b) | | outcomes Sale, Collection Only, Return Only |
+| return_items | Table **Customer Visit Return Item** | §4.5 |
+| return_total | Currency | Σ credit note grand totals (computed through ERPNext like the sale) |
+| credit_applied | Currency | credit set off against invoices in this visit (§4.5) |
 | sales_invoice / payment_entry | Link | read only, set on submit |
+| credit_notes | Small Text (read only) | credit note names created on submit |
+| credit_journal | Link Journal Entry (read only) | credit set-off entry, §4.5 |
 | customer_signature | Signature | optional |
 
 **Customer Visit Change** (child table, filled on save when `update_customer` is ticked): `field_label`, `old_value`, `new_value`, `status` (Applied / Pending Approval / Rejected). Old values are read from Customer / Contact / Address before writing, so the day report can show before → after.
@@ -187,6 +226,12 @@ Cheques: recorded only; posting deferred until a cheque MoP is enabled for agent
 | excess_qty | if negative missing, shown separately; blocks submit |
 | valuation_rate, missing_value | from Bin |
 
+**Customer returns received** (Phase 5b, table **Mobile Settlement Return**, one row per item from the trip's submitted credit notes): item_code, uom, credited_qty (read only, from the credit notes' Stock Ledger in customer_return_warehouse), credited_damaged_qty (read only, the agent's "Damaged" condition, for information), received_qty and damaged_qty (Store Keeper enters at Pending Store; defaults received = credited, damaged = credited_damaged), missing_qty = credited − received (read only), valuation_rate, missing_value. damaged > received or received > credited blocks submit. missing_value adds to stock_variance_value (same tolerance gate). On submit:
+- damaged_qty → Stock Entry (Material Transfer, mobile_purpose **Return Damage**) customer_return_warehouse → damage_warehouse;
+- missing_qty → Stock Entry (Material Issue, mobile_purpose **Return Shortage**) from customer_return_warehouse to stock_shortage_account (or recovery from the agent, same rule as van shortage);
+- good returns (received − damaged) stay in customer_return_warehouse; the store moves them with normal Stock Entries.
+Batches follow the credit notes' batches (oldest first). Settlement cancel reverses these entries with the others. The Mobile Settlement Sheet gets the same section.
+
 ### 4.4 Custom fields on standard DocTypes (fixtures)
 
 | DocType | Fields |
@@ -198,6 +243,32 @@ Cheques: recorded only; posting deferred until a cheque MoP is enabled for agent
 
 All inserted after an existing field via `insert_after`, in a collapsed section, `depends_on: eval:doc.mobile_trip` so normal users never see them.
 
+Phase 5b: no new custom fields. Credit notes are Sales Invoices with the same three fields; the set-off Journal Entry uses `mobile_trip`; Stock Entry `mobile_purpose` gets options `Return Damage` and `Return Shortage`.
+
+### 4.5 Customer returns (Phase 5b)
+
+**Customer Visit Return Item**: item_code, item_name, uom, conversion_factor, stock_qty, qty, rate, amount (read only), against_invoice (Link Sales Invoice), sales_invoice_item (hidden: the original line), return_reason (Link Mobile Return Reason), condition (Select Resaleable / Damaged), remarks, batch_info (read only), credit_note (read only).
+
+- **against_invoice** picker (`return_invoice_query`): this customer's submitted, non-return Sales Invoices of the company containing the item (mobile or standard). Optional, except for **batch items, where it is required**. The batch comes from the original invoice's bundle (ERPNext return logic: only batches sold on that line, less what was already returned).
+- **qty** ≤ sold on that line − already returned (ERPNext's own return validation). Without an invoice: any stock item of the price list.
+- **rate**: the original line's net rate (after its invoice discount); without an invoice the price-list rate. Read only.
+- Returns need `returns_enabled`; a reason with `requires_remark` needs remarks.
+- **Limit**: return_total > agent.max_return_value_per_visit → rejected "needs a supervisor"; 0 means the agent cannot take returns at all. A Supervisor can submit the visit (Desk).
+- **Return Only** outcome: return lines required, no sale; previous-invoice collections allowed. Return lines are also allowed with Sale and Collection Only; never with No Sale / Shop Closed.
+
+**On visit submit**, after the sale invoice and before the Payment Entry:
+
+1. One credit note per against_invoice, plus one without return_against for lines without an invoice: Sales Invoice `is_return=1`, `return_against`, `update_stock=1`, `set_warehouse = customer_return_warehouse`, series `sret_naming_series`, `mobile_trip`, `customer_visit`, `is_mobile_sale=1`, same price list, tax template and sales team as a sale. Built from ERPNext's `make_sales_return` mapper (per original invoice) trimmed to the returned lines, so batches, taxes and return validation are ERPNext's. `update_outstanding_for_self = 1` (v16 default): every credit note carries its own negative outstanding.
+2. **Credit set-off — never cash.** One Journal Entry, voucher type **Credit Note**, built exactly like ERPNext's Payment Reconciliation (`reconcile_dr_cr_note`): only receivable-account lines, Dr against the credit note / Cr against the invoice it settles. Credit is applied in this order until used up: (a) the credit note's own against_invoice if still outstanding, (b) today's sale, (c) the previous invoices selected in collect_previous. The Payment Entry then covers only the cash still due. Credit left over stays on the customer account as the credit note's outstanding (visible in Accounts Receivable; the office applies it with Payment Reconciliation). It is **not** applied automatically at later visits; `get_customer` and the SPA customer card show it as **credit available**.
+   - *Why this mechanism:* v16 offers three standard ways. (i) `update_outstanding_for_self = 0` only works against the return_against invoice and only while it has outstanding ≥ the credit (ERPNext flips it otherwise). (ii) Negative Payment Entry references fail when the credit is ≥ the money due ("Cannot receive from customer against negative outstanding") and would put zero-cash Payment Entries on the agent cash account. (iii) The Credit Note Journal Entry works for every case (old invoice, today's sale, zero cash, partial), never touches cash, and is what ERPNext's own reconciliation tool creates.
+3. Credit rules use the net: `due = sale + selected previous − credit applied`; cash-only / per-invoice credit limit apply to what remains on today's sale.
+
+**Cancel** (Supervisor, trip not Settled): Payment Entry → set-off Journal Entry → credit note(s) → Sales Invoice → visit.
+
+**Guards** (§5.2): a credit note with mobile_trip needs the internal flag, trip In Field, and may only use customer_return_warehouse. customer_return_warehouse may **receive** stock only from mobile credit notes (Stock Entry with it as target, Sales Invoice / Delivery Note / Purchase Receipt into it and Stock Reconciliation on it are blocked for non-mobile documents). **Outward** standard Stock Entries (store moves good returns to FG or to Damaged Returns) stay allowed.
+
+**Permissions**: credit notes and the set-off JE are created under ignore_permissions inside visit submit, as the agent (tests run them as the real agent; cancel as the real supervisor, CLAUDE.md rule 13). Where ERPNext re-reads referenced invoices as the session user, the same per-request exemption as the Payment Entry collection applies. Agents read + print their own credit notes through the existing Sales Invoice scope; returns against a standard invoice use the same per-request exemption as collections (the invoices this visit validated, this request only). Any Agent rule needed on a standard DocType uses the Custom DocPerm copy mechanism, integrity- and drift-checked.
+
 ## 5. Business logic
 
 All document creation runs server-side in one DB transaction per user action; a failure rolls back the visit and any half-made invoice or payment.
@@ -205,6 +276,7 @@ All document creation runs server-side in one DB transaction per user action; a 
 ### 5.1 Customer Visit submit
 
 1. Validate: trip status = In Field; `frappe.session.user` = trip.agent.user (Supervisor bypass); visit_datetime within trip_date; geolocation present if Settings require it.
+1a. **Discounts (Phase 5b).** Per line the agent enters discount_percentage **or** discount_amount (per unit; the other is computed); it applies on top of the pricing-rule rate. Optional invoice-level additional_discount_percentage **or** discount_amount, applied on **Net Total** (`apply_discount_on = "Net Total"`, taxes computed after the discount) through the Sales Invoice fields (set by code even though they are hidden in Desk on agrosys). **Cap:** manual discount = Σ qty × (pricing-rule rate − final rate) + invoice discount; manual ÷ price-list value (Σ qty × price_list_rate) × 100 ≤ agent.max_discount_pct. Pricing-rule discounts are not counted. Totals always come from `build_invoice` (ERPNext), never from the client.
 2. Outcome **No Sale**: require reason (and remarks when the reason requires them). Outcome **Shop Closed**: no reason (cleared if sent), remarks optional. Both reject `sale_items` and any collection.
 3. Outcome **Sale**: `sale_items` mandatory. For each line, check `qty × conversion_factor ≤ actual_qty` in van Bin (reads `tabBin` with `for update` to stop two parallel visits overselling).
 4. Apply customer updates: if `apply_customer_updates_directly` → update Customer (`customer_name`, `mobile_no`, `email_id`, `tax_id`), the primary Contact and primary Billing Address (create if missing) → status Applied. Else status Pending Approval; Supervisor action `Approve Customer Update` applies it later. Frappe Version log keeps history.
@@ -222,7 +294,8 @@ All document creation runs server-side in one DB transaction per user action; a 
 | --- | --- |
 | Sales Invoice.validate | If no `mobile_trip` and any item warehouse is a child of the van group → throw. If `mobile_trip` set → warehouse must equal trip van; trip must not be Settled. |
 | Sales Invoice.before_cancel | If `mobile_trip` and trip Settled → throw (reverse via settlement amendment only). |
-| Delivery Note / Stock Entry / Stock Reconciliation.validate | Van warehouse allowed only when `mobile_trip` set (Stock Entry) or never (DN, Stock Reco). |
+| Delivery Note / Stock Entry / Stock Reconciliation.validate | Van warehouse allowed only when `mobile_trip` set (Stock Entry) or never (DN, Stock Reco). Phase 5b: stock **into** customer_return_warehouse only from mobile credit notes / settlement entries. |
+| Sales Invoice.validate (is_return, Phase 5b) | Mobile credit note: internal flag, trip In Field, warehouse = customer_return_warehouse only. |
 | Payment Entry.validate | `paid_to` = any agent cash account and no `mobile_trip` → throw. |
 | Journal Entry.validate | Agent cash account line without `mobile_trip` → throw unless user has Mobile Sales Supervisor. |
 
@@ -249,12 +322,14 @@ Issued and sold come from Stock Ledger Entry filtered by `warehouse = van` and `
 | 4 | Journal Entry (cash hand-over) | Dr main_cash_account / Cr agent cash = `cash_handed_over` |
 | 5 | Journal Entry (variance), only if ≠ 0 | Short: Dr cash_shortage_account or Employee (party) / Cr agent cash. Excess: reverse. |
 | 6 | Cheques | Optional Payment Entry Internal Transfer agent cash → bank-in-transit per cheque |
+| 7 | Stock Entry (Material Transfer, purpose Return Damage, Phase 5b) | customer_return_warehouse → damage_warehouse, `damaged_qty` of customer returns |
+| 8 | Stock Entry (Material Issue, purpose Return Shortage, Phase 5b) | from customer_return_warehouse, `missing_qty` of customer returns, same accounts / recovery as #3 |
 
 Post-conditions checked before commit: van Bin qty = 0 for all items; agent cash account balance = 0. Then trip status → Settled, settlement linked.
 
 **Variance gate:** `|cash_variance| + stock_variance_value > shortage_tolerance_value` → workflow needs Supervisor approval before submit.
 
-**Cancel settlement** (Supervisor): cancels 5 → 1 in reverse, trip back to Settling.
+**Cancel settlement** (Supervisor): cancels every posting (8 → 1) in reverse, trip back to Settling.
 
 ### 5.5 Trip status machine
 
@@ -284,9 +359,9 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 
 | Screen | Content |
 | --- | --- |
-| Today | Current trip status, van stock list with live qty, KPIs (visits, sales, collected), Start Trip / End Day / Reopen Trip |
+| Today | Current trip status, vehicle + helper, van stock list with live qty, KPIs (visits, sales, collected), Start Trip / End Day / Reopen Trip |
 | Route | Planned customers for the day in sequence, visited ticks, search and visit any customer (off-route visits allowed), add new customer (quick-entry: name, mobile, address, customer group and territory pickers defaulting from Settings, optional route of any active Mobile Route) |
-| Visit | Step 1 check-in (GPS + photo) → Step 2 customer details edit → Step 3 shelf stock count → Step 4 outcome: No Sale (reason) or Sale (cart from van stock) → Step 5 collection (current + previous outstanding) → Submit → Print |
+| Visit | Step 1 check-in (GPS + photo) → Step 2 customer details edit → Step 3 shelf stock count → Step 4 outcome: No Sale (reason) or Sale (cart from van stock, line and invoice discount) → Step 4b returns (Sale / Collection Only / Return Only) → Step 5 collection (current + previous outstanding, credit applied, cash due) → Submit → Print (invoice, credit notes, receipt) |
 | History | Today's visits, reprint invoice/receipt |
 | Settlement | Pre-filled reconciliation, agent enters returned/damaged counts and cash denominations, submits for verification |
 
@@ -299,8 +374,9 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 | `get_context()` | Agent, open trip, settings flags, price list |
 | `get_van_stock(trip)` | Item, uom, actual_qty, rate, image |
 | `get_route_plan(trip)` | Route customers + visited flag + outstanding |
-| `get_customer(customer)` | Details, primary contact/address, outstanding invoices, last shelf stock |
-| `price_cart(trip, customer, items)` | Builds unsaved Sales Invoice, returns totals/taxes/pricing-rule results |
+| `get_customer(customer)` | Details, primary contact/address, outstanding invoices, last shelf stock, credit available (open credit notes, Phase 5b) |
+| `price_cart(trip, customer, items, discount, returns)` | Builds unsaved Sales Invoice (and credit notes), returns totals/taxes/pricing-rule results, discount cap check, return total, credit applied, cash due |
+| `return_invoice_query(...)` / `get_returnable_lines(invoice)` | Phase 5b: against_invoice picker; the invoice's lines with returnable qty and net rate |
 | `search_customers(q)` / `create_customer(payload)` | Customer search (any customer); quick-entry new customer. Payload may carry `customer_group`, `territory` (leaf nodes; default from Settings) and `route` (active Mobile Route: the customer is appended with sequence = last + 1, under ignore_permissions; agents keep read only on routes) |
 | `get_customer_form_options()` | Leaf customer groups and territories, active routes, Settings defaults for the new-customer form |
 | `submit_visit(payload)` | Creates + submits Customer Visit (and SI/PE); idempotent on `client_ref` |
@@ -427,7 +503,8 @@ mobile_sales/
 4. **Settlement** — reconciliation service, settlement form, workflow, ledger postings, post-condition checks, settlement sheet.
 5. **Mobile SPA** — screens in §6.1 on top of the API, PWA shell (app shell cache only), browser printing. (ESC/POS hand-off deferred until after v1.0.0, §6.3.)
 6. **Reports + workspace** — §7.
-7. **Phase 2** — offline queue, customer sales returns (credit note into damage/return warehouse from a visit), GPS track.
+5b. **Vehicles, discounts, returns** — Mobile Vehicle + legacy patch (§3.6), line and invoice discounts with the agent cap (§5.1), customer returns with credit notes and set-off (§4.5), settlement return count (§4.3).
+7. **Phase 2** — offline queue, GPS track.
 
 ### 8.3 Acceptance tests
 
@@ -449,6 +526,7 @@ mobile_sales/
 ### 8.4 Open questions
 
 - Batch-tracked items: resolved — present on agrosys, handled in §5.6.
-- Customer sales returns needed in phase 1?
+- Customer sales returns: resolved — Phase 5b, §4.5.
 - Agent shortages: always recover from salary, or write off below tolerance?
-- Is a vehicle/driver separate from the agent (one van, two people)?
+- Vehicle separate from the agent: resolved — Mobile Vehicle with optional helper, §3.6.
+- Phase 5b decisions (Raj, 2026-11-02): return rate read only; leftover credit not auto-applied (customer card shows credit available); max_return_value_per_visit 0 = supervisor only; invoice discount on Net Total.

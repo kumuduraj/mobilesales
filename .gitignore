@@ -7,3 +7,4 @@ site_config.json
 *.log
 .DS_Store
 *.egg-info/
+.claude/settings.local.json

@@ -34,6 +34,7 @@ def get_visit_context(visit) -> tuple[frappe._dict, frappe._dict]:
 			"mode_of_payment",
 			"max_discount_pct",
 			"credit_limit_per_invoice",
+			"max_return_value_per_visit",
 		],
 		as_dict=True,
 	)
@@ -68,13 +69,7 @@ def build_invoice(visit, save=False):
 	for row in visit.sale_items:
 		si.append(
 			"items",
-			{
-				"item_code": row.item_code,
-				"qty": row.qty,
-				"uom": row.uom,
-				"warehouse": trip.van_warehouse,
-				"discount_percentage": flt(row.discount_percentage),
-			},
+			{"item_code": row.item_code, "qty": row.qty, "uom": row.uom, "warehouse": trip.van_warehouse},
 		)
 
 	si.set_missing_values()
@@ -82,7 +77,8 @@ def build_invoice(visit, save=False):
 		si.taxes_and_charges = settings.default_tax_template
 		si.set("taxes", [])
 		si.set_taxes()
-	si.calculate_taxes_and_totals()
+	si.calculate_taxes_and_totals()  # pricing rules only: the base for the agent's manual discount
+	apply_manual_discounts(visit, si)
 
 	if save:
 		si.flags.ignore_permissions = True
@@ -90,6 +86,80 @@ def build_invoice(visit, save=False):
 		si.insert()
 		si.submit()
 	return si
+
+
+def apply_manual_discounts(visit, si):
+	"""The agent's line discount (% or amount per unit) applies on top of the pricing-rule rate; the
+	invoice discount on Net Total. Records si.flags.manual_discount for the cap (spec §5.1)."""
+	price_list_value = manual = 0.0
+	freeze = False
+	for row, item in zip(visit.sale_items, si.items, strict=False):
+		pricing_rule_rate = flt(item.rate)
+		final = pricing_rule_rate
+		if flt(row.get("discount_amount")):
+			final = pricing_rule_rate - flt(row.discount_amount)
+		elif flt(row.discount_percentage):
+			final = pricing_rule_rate * (1 - flt(row.discount_percentage) / 100)
+		final = flt(final, item.precision("rate"))
+		if final < 0:
+			frappe.throw(_("Row {0}: the discount is more than the rate {1}.").format(row.idx, pricing_rule_rate))
+		if final != pricing_rule_rate:
+			_set_rate(item, final)
+			freeze = freeze or bool(item.pricing_rules)
+		row.pricing_rule_rate = pricing_rule_rate
+		price_list_value += flt(item.qty) * (flt(item.price_list_rate) or pricing_rule_rate)
+		manual += flt(item.qty) * (pricing_rule_rate - final)
+
+	if freeze and any(item.is_free_item for item in si.items):
+		frappe.throw(
+			_(
+				"A free-item offer applies to this invoice, so a manual discount on a line with a pricing rule "
+				"is not possible (the free item would be lost). Remove that line discount."
+			),
+			title=_("Discount not possible"),
+		)
+	if freeze:
+		# ERPNext re-applies pricing rules on save, which would drop the manual discount on those lines:
+		# keep every computed rate and save the invoice with ignore_pricing_rule (the visit keeps
+		# pricing_rule_rate per line).
+		si.ignore_pricing_rule = 1
+		for item in si.items:
+			_set_rate(item, flt(item.rate))
+			item.pricing_rules = ""
+
+	if flt(visit.get("discount_amount")) or flt(visit.get("additional_discount_percentage")):
+		si.apply_discount_on = "Net Total"
+		if flt(visit.get("discount_amount")):
+			si.discount_amount = flt(visit.discount_amount)
+			si.additional_discount_percentage = 0
+		else:
+			si.additional_discount_percentage = flt(visit.additional_discount_percentage)
+	si.calculate_taxes_and_totals()
+	manual += flt(si.discount_amount)
+	si.flags.manual_discount = frappe._dict(
+		amount=flt(manual, 2),
+		price_list_value=flt(price_list_value, 2),
+		percentage=flt(manual / price_list_value * 100, 3) if price_list_value else 0,
+	)
+
+
+def _set_rate(item, rate):
+	base = flt(item.rate_with_margin) or flt(item.price_list_rate)
+	item.discount_percentage = 0
+	item.discount_amount = flt(base - rate, item.precision("discount_amount"))
+	item.rate = rate
+
+
+def check_discount_cap(si, max_discount_pct):
+	info = si.flags.manual_discount
+	if info and info.amount > 0 and info.percentage > flt(max_discount_pct) + 0.0005:
+		frappe.throw(
+			_("Your discounts ({0}% of the price-list value) are above your limit of {1}%.").format(
+				flt(info.percentage, 2), flt(max_discount_pct)
+			),
+			title=_("Discount limit"),
+		)
+
 
 
 def posting_datetime(visit) -> tuple:
@@ -117,6 +187,17 @@ def copy_invoice_to_visit(visit, si):
 		row.price_list_rate = item.price_list_rate
 		row.rate = item.rate
 		row.amount = item.amount
+		# enter one, the other is computed (both relative to the pricing-rule rate)
+		discount = flt(row.pricing_rule_rate) - flt(item.rate)
+		row.discount_amount = flt(discount, item.precision("discount_amount")) if discount > 0 else 0
+		row.discount_percentage = (
+			flt(discount / flt(row.pricing_rule_rate) * 100, 3) if discount > 0 and flt(row.pricing_rule_rate) else 0
+		)
+	if si.apply_discount_on == "Net Total" and flt(si.discount_amount):
+		visit.discount_amount = si.discount_amount
+		visit.additional_discount_percentage = si.additional_discount_percentage
+	else:
+		visit.discount_amount = visit.additional_discount_percentage = 0
 	visit.net_total = si.net_total
 	visit.total_taxes = si.total_taxes_and_charges
 	visit.grand_total = si.grand_total

@@ -40,8 +40,36 @@ def trip_vouchers(trip_name) -> tuple[list[str], list[str]]:
 		filters={"mobile_trip": trip_name, "docstatus": 1, "mobile_purpose": ["in", ISSUE_PURPOSES]},
 		pluck="name",
 	)
-	invoices = frappe.get_all("Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1}, pluck="name")
+	invoices = frappe.get_all(
+		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1, "is_return": 0}, pluck="name"
+	)
 	return issues, invoices
+
+
+def return_movement(trip_name, warehouse) -> tuple[dict, dict, dict]:
+	"""Customer returns credited on the trip (spec §4.3): {item: qty}, {(item, batch): qty} and
+	{item: valuation rate} from the credit notes' Stock Ledger in the customer return warehouse."""
+	items, batches, values = defaultdict(float), defaultdict(float), defaultdict(float)
+	notes = frappe.get_all(
+		"Sales Invoice", filters={"mobile_trip": trip_name, "docstatus": 1, "is_return": 1}, pluck="name"
+	)
+	if not (notes and warehouse):
+		return items, batches, {}
+	for sle in frappe.get_all(
+		"Stock Ledger Entry",
+		filters={"warehouse": warehouse, "is_cancelled": 0, "voucher_type": "Sales Invoice", "voucher_no": ["in", notes]},
+		fields=["item_code", "actual_qty", "stock_value_difference", "serial_and_batch_bundle"],
+	):
+		items[sle.item_code] += flt(sle.actual_qty)
+		values[sle.item_code] += flt(sle.stock_value_difference)
+		if sle.serial_and_batch_bundle:
+			for entry in frappe.get_all(
+				"Serial and Batch Entry", filters={"parent": sle.serial_and_batch_bundle}, fields=["batch_no", "qty"]
+			):
+				if entry.batch_no:
+					batches[(sle.item_code, entry.batch_no)] += abs(flt(entry.qty))
+	rates = {code: flt(values[code] / qty) if qty else 0 for code, qty in items.items()}
+	return items, batches, rates
 
 
 def stock_movement(trip_name, van) -> tuple[dict, dict]:
@@ -117,6 +145,7 @@ def refresh_settlement(doc):
 	agent = frappe.db.get_value("Mobile Sales Agent", trip.agent, ["cash_account", "employee"], as_dict=True)
 
 	refresh_stock(doc, trip)
+	refresh_returns(doc, trip, settings)
 	refresh_sales_and_collections(doc, trip)
 	refresh_cash(doc, trip, agent)
 
@@ -202,6 +231,49 @@ def refresh_stock(doc, trip):
 	doc.stock_variance_value = flt(variance, 2)
 
 
+def refresh_returns(doc, trip, settings):
+	"""Customer returns received: credited from the ledger; the store keeper's received / damaged
+	counts are kept (new rows default to credited / the agent's Damaged condition)."""
+	items, _batches, rates = return_movement(trip.name, settings.customer_return_warehouse)
+	damaged_by_agent = defaultdict(float)
+	for row in frappe.db.sql(
+		"""select r.item_code, sum(r.stock_qty) as qty from `tabCustomer Visit Return Item` r
+		join `tabCustomer Visit` v on v.name = r.parent and r.parenttype = 'Customer Visit'
+		where v.mobile_trip = %s and v.docstatus = 1 and r.`condition` = 'Damaged' group by r.item_code""",
+		trip.name,
+		as_dict=True,
+	):
+		damaged_by_agent[row.item_code] = flt(row.qty)
+	entered = {row.item_code: row for row in doc.get("return_lines") or []}
+	doc.set("return_lines", [])
+	variance = 0.0
+	for item_code in sorted(code for code, qty in items.items() if flt(qty, QTY_PRECISION)):
+		item = frappe.get_cached_value("Item", item_code, ["item_name", "stock_uom", "has_batch_no"], as_dict=True)
+		credited = flt(items[item_code], QTY_PRECISION)
+		prev = entered.get(item_code)
+		received = flt(prev.received_qty) if prev else credited
+		damaged = flt(prev.damaged_qty) if prev else min(flt(damaged_by_agent[item_code], QTY_PRECISION), credited)
+		missing = max(flt(credited - received, QTY_PRECISION), 0)
+		row = doc.append(
+			"return_lines",
+			{
+				"item_code": item_code,
+				"item_name": item.item_name,
+				"uom": item.stock_uom,
+				"has_batch_no": item.has_batch_no,
+				"credited_qty": credited,
+				"credited_damaged_qty": flt(damaged_by_agent[item_code], QTY_PRECISION),
+				"received_qty": received,
+				"damaged_qty": damaged,
+				"missing_qty": missing,
+				"valuation_rate": rates.get(item_code, 0),
+				"missing_value": flt(missing * rates.get(item_code, 0), 2),
+			},
+		)
+		variance += row.missing_value
+	doc.stock_variance_value = flt(flt(doc.stock_variance_value) + variance, 2)
+
+
 def refresh_sales_and_collections(doc, trip):
 	visits = frappe.get_all(
 		"Customer Visit",
@@ -217,7 +289,7 @@ def refresh_sales_and_collections(doc, trip):
 	doc.credit_sales_amount = sum(flt(v.rounded_total) - flt(v.collect_amount) for v in sales)
 
 	invoices = frappe.get_all(
-		"Sales Invoice", filters={"mobile_trip": trip.name, "docstatus": 1}, fields=["name", "grand_total"]
+		"Sales Invoice", filters={"mobile_trip": trip.name, "docstatus": 1, "is_return": 0}, fields=["name", "grand_total"]
 	)
 	doc.invoice_count = len(invoices)
 	doc.invoiced_amount = sum(flt(i.grand_total) for i in invoices)

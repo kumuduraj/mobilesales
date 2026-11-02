@@ -11,10 +11,10 @@ from mobilesales.services import settings as ms_settings
 
 CACHE_KEY = "mobilesales:guard_context"
 SUPERVISOR_ROLE = "Mobile Sales Supervisor"
-EMPTY_CONTEXT = {"van_group": None, "vans": frozenset(), "cash": frozenset()}
+EMPTY_CONTEXT = {"van_group": None, "vans": frozenset(), "cash": frozenset(), "customer_returns": None}
 INTERNAL_FLAG = "mobilesales_internal"
 SETTLEMENT_FLAG = "mobilesales_settlement"
-SETTLEMENT_PURPOSES = ("Return", "Damage", "Shortage")
+SETTLEMENT_PURPOSES = ("Return", "Damage", "Shortage", "Return Damage", "Return Shortage")
 # Trip statuses in which app code may post each kind of mobile Stock Entry.
 # Issue is posted from Mobile Trip.on_submit: trip already submitted, status still Draft.
 PURPOSE_TRIP_STATUSES = {
@@ -23,6 +23,8 @@ PURPOSE_TRIP_STATUSES = {
 	"Return": ("Settling",),
 	"Damage": ("Settling",),
 	"Shortage": ("Settling",),
+	"Return Damage": ("Settling",),
+	"Return Shortage": ("Settling",),
 }
 
 
@@ -36,7 +38,7 @@ def get_guard_context() -> dict:
 def build_guard_context() -> dict:
 	settings = ms_settings.get_settings()
 	if not settings.van_warehouse_group:
-		return EMPTY_CONTEXT
+		return {**EMPTY_CONTEXT, "customer_returns": settings.customer_return_warehouse or None}
 
 	vans = frozenset()
 	bounds = frappe.db.get_value("Warehouse", settings.van_warehouse_group, ["lft", "rgt"])
@@ -48,7 +50,12 @@ def build_guard_context() -> dict:
 	cash = frozenset(
 		frappe.get_all("Mobile Sales Agent", filters={"cash_account": ["is", "set"]}, pluck="cash_account")
 	)
-	return {"van_group": settings.van_warehouse_group, "vans": vans, "cash": cash}
+	return {
+		"van_group": settings.van_warehouse_group,
+		"vans": vans,
+		"cash": cash,
+		"customer_returns": settings.customer_return_warehouse or None,
+	}
 
 
 def clear_guard_cache(*args, **kwargs):
@@ -57,9 +64,26 @@ def clear_guard_cache(*args, **kwargs):
 
 def _active_context() -> dict | None:
 	ctx = get_guard_context()
-	if not ctx or not (ctx["vans"] or ctx["cash"]):
+	if not ctx or not (ctx["vans"] or ctx["cash"] or ctx.get("customer_returns")):
 		return None
 	return ctx
+
+
+def _throw_customer_returns(doctype_label, warehouse):
+	frappe.throw(
+		_(
+			"Customer return warehouse {0} receives stock only from Mobile Sales credit notes. "
+			"{1} cannot bring stock into it (moving stock out of it is allowed)."
+		).format(frappe.bold(warehouse), _(doctype_label)),
+		title=_("Mobile Sales: customer returns"),
+	)
+
+
+def _guard_customer_returns_inward(ctx, doctype_label, inward):
+	"""Block INWARD stock into the customer return warehouse from non-mobile documents."""
+	warehouse = ctx.get("customer_returns")
+	if warehouse and warehouse in inward:
+		_throw_customer_returns(doctype_label, warehouse)
 
 
 def on_warehouse_change(doc, method=None, *args):
@@ -182,11 +206,24 @@ def validate_sales_invoice(doc, method=None):
 		vans = used & ctx["vans"]
 		if vans:
 			_throw_van("Sales Invoice", vans)
+		if doc.get("is_return") and doc.get("update_stock"):
+			_guard_customer_returns_inward(ctx, "Sales Invoice", used)
 		return
 
 	_require_internal(doc, "Sales Invoice")
 	trip = _get_trip(doc)
 	_require_trip_status(trip, ("In Field",), "Sales Invoice")
+	if doc.get("is_return"):
+		returns_wh = ctx.get("customer_returns")
+		other = used - {returns_wh}
+		if not returns_wh or other:
+			frappe.throw(
+				_("A mobile credit note may only use the customer return warehouse {0}.").format(
+					frappe.bold(returns_wh or _("(not set)"))
+				),
+				title=_("Mobile Sales: customer returns"),
+			)
+		return
 	_require_trip_van(trip, used, "Sales Invoice")
 
 
@@ -200,21 +237,23 @@ def validate_delivery_note(doc, method=None):
 	ctx = _active_context()
 	if not ctx:
 		return
-	vans = (
-		_warehouses(doc, ("set_warehouse", "set_target_warehouse"), ("warehouse", "target_warehouse"))
-		& ctx["vans"]
-	)
+	used = _warehouses(doc, ("set_warehouse", "set_target_warehouse"), ("warehouse", "target_warehouse"))
+	vans = used & ctx["vans"]
 	if vans:
 		_throw_van("Delivery Note", vans)
+	if doc.get("is_return"):
+		_guard_customer_returns_inward(ctx, "Delivery Note", used)
 
 
 def validate_stock_reconciliation(doc, method=None):
 	ctx = _active_context()
 	if not ctx:
 		return
-	vans = _warehouses(doc, ("set_warehouse",), ("warehouse",)) & ctx["vans"]
+	used = _warehouses(doc, ("set_warehouse",), ("warehouse",))
+	vans = used & ctx["vans"]
 	if vans:
 		_throw_van("Stock Reconciliation", vans)
+	_guard_customer_returns_inward(ctx, "Stock Reconciliation", used)
 
 
 def validate_stock_entry(doc, method=None):
@@ -225,6 +264,7 @@ def validate_stock_entry(doc, method=None):
 	if not doc.get("mobile_trip"):
 		if vans:
 			_throw_van("Stock Entry", vans)
+		_guard_customer_returns_inward(ctx, "Stock Entry", _warehouses(doc, ("to_warehouse",), ("t_warehouse",)))
 		return
 
 	_require_internal(doc, "Stock Entry")
@@ -276,3 +316,14 @@ def validate_journal_entry(doc, method=None):
 
 	_require_internal(doc, "Journal Entry")
 	_require_trip_not_settled(_get_trip(doc), "Journal Entry")
+
+
+def validate_purchase_receipt(doc, method=None):
+	"""Purchase Receipt / Purchase Invoice (update_stock): never into the customer return warehouse."""
+	ctx = _active_context()
+	if not ctx or not ctx.get("customer_returns"):
+		return
+	if doc.get("is_return") or (doc.doctype == "Purchase Invoice" and not doc.get("update_stock")):
+		return  # purchase returns take stock out
+	inward = _warehouses(doc, ("set_warehouse", "rejected_warehouse"), ("warehouse", "rejected_warehouse"))
+	_guard_customer_returns_inward(ctx, doc.doctype, inward)
