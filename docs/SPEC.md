@@ -121,7 +121,7 @@ One record per van. Autoname `field:vehicle_no`.
 
 Rules: a vehicle's van must be empty before a trip loads it; one open trip per vehicle and one per agent. The agent keeps the cash account (cash is personal, the van is not). Guards keep treating **every leaf under van_warehouse_group as a van**, whether linked to a vehicle, a legacy agent or nothing.
 
-**Legacy patch** (refuses to run, with a clear message, while any Mobile Trip is not Settled or Cancelled): for each agent with a van_warehouse, create Mobile Vehicle `VAN-01`, `VAN-02`, … (agent order) whose van_warehouse is that existing warehouse (no stock or warehouse moved), set agent.default_vehicle, and set `vehicle` on that agent's historic trips. Agent.van_warehouse stays as data. Idempotent (a warehouse already linked to a vehicle is skipped).
+**Legacy patch** (refuses to run, with a clear message, while any Mobile Trip is not Settled or Cancelled): for each agent with a van_warehouse, create Mobile Vehicle `VAN-01`, `VAN-02`, … (agent order) whose van_warehouse is that existing warehouse (no stock or warehouse moved), set agent.default_vehicle, and set `vehicle` on that agent's historic trips. Agent.van_warehouse stays as data. Idempotent (a warehouse already linked to a vehicle is skipped). The vehicle is active only if the agent is (old test agents stay inactive).
 
 Agents read Mobile Vehicle (the trip and Today screen show it); Supervisor full; Store Keeper read.
 
