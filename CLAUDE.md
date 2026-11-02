@@ -72,6 +72,12 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     throws. (frontend/tests/mount.test.js; `yarn build` runs `vitest run` first. v0.5.0 shipped a blank screen:
     templates called __() which www pages do not define — register helpers on app.config.globalProperties.)
 
+19. Any commit that changes a DocType schema, or code that reads new fields, is followed IMMEDIATELY by
+    `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` (same task, before any further
+    code change). apps/mobilesales is the live code: gunicorn recycles workers (--max-requests) and they import the
+    new files from disk. If the agrosys migrate cannot run, revert the working tree to the last migrated commit
+    (git stash / worktree) — never leave agrosys running code ahead of its schema.
+
 ## Definition of done for EVERY task
 1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.
 2. Tests on mstest.local only: rule 15 leftover check, then `bench --site mstest.local run-tests --app mobilesales`.
