@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="{{ lang or 'en' }}">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>{{ title }}</title>
+		{% for style in styles %}<style>{{ style }}</style>{% endfor %}
+		<style>
+			.ms-page { page-break-after: always; break-after: page; margin-bottom: 24px; }
+			.ms-page:last-child { page-break-after: auto; break-after: auto; }
+			@media screen { .ms-page { border-bottom: 1px dashed #888; padding-bottom: 16px; } }
+		</style>
+	</head>
+	<body>
+		{% for page in pages %}
+		<div class="ms-page" data-doctype="{{ page.doctype }}" data-name="{{ page.name }}" data-format="{{ page.print_format }}">{{ page.html }}</div>
+		{% endfor %}
+		{% if not pages %}<p>{{ _("Nothing to print for this visit.") }}</p>{% endif %}
+		<script>
+			window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 300); });
+		</script>
+	</body>
+</html>

@@ -3,8 +3,14 @@ return warehouse), credit set-off against the returned invoice / today's sale / 
 cancel chain, customer-return warehouse guards and the phone API. Flows run as the real agent, cancel as
 the real supervisor (CLAUDE.md rule 13)."""
 
+import re
+from unittest.mock import patch
+
 import frappe
 from frappe.utils import flt, now_datetime, nowdate
+from frappe.website.serve import get_response
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -107,6 +113,19 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 			self.visit(items=items, discount_amount=11, submit=False)
 		percent = self.visit(items=[{"item_code": self.plain_item, "qty": 1}], additional_discount_percentage=10)
 		self.assertEqual(percent.grand_total, 90)
+
+		# the 4-inch invoice shows list price, line discount and the invoice discount
+		with as_user(self.agent_a.user):
+			html = frappe.get_print("Sales Invoice", visit.sales_invoice, print_format="Mobile Invoice 4in")
+		for text in ("List", "Disc. 5.00%", "Disc. 10.00%", "Subtotal", "Invoice discount", "-LKR 10.00" if "LKR" in html else "10.00"):
+			self.assertIn(text, html)
+
+		# a total with cents is rounded: the invoice shows the rounding adjustment
+		odd = self.visit(items=[{"item_code": self.plain_item, "qty": 1, "discount_amount": 0.5}])
+		si = frappe.get_doc("Sales Invoice", odd.sales_invoice)
+		with as_user(self.agent_a.user):
+			html = frappe.get_print("Sales Invoice", si.name, print_format="Mobile Invoice 4in")
+		self.assertEqual("Rounding adjustment" in html, bool(si.rounding_adjustment) and si.rounded_total != si.grand_total)
 
 	def test_pricing_rule_discount_not_capped_and_manual_on_top(self):
 		frappe.get_doc(
@@ -374,6 +393,226 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		self.assertTrue(result["credit_notes"].startswith("MB-SRET-"))
 		self.assertEqual(history[result["name"]].credit_notes, result["credit_notes"])
 		self.assertEqual(self.outstanding(result["sales_invoice"]), 0)
+
+	def test_live_run_steps_sale_and_full_return_set_off(self):
+		"""MTRIP-26-00005 steps as the real agent through the phone API: 6% refused, a return above the
+		invoiced qty refused, then 1 sold + 1 returned against an earlier paid invoice = no cash at all."""
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, {"max_discount_pct": 5, "max_return_value_per_visit": 2000})
+		earlier = self.visit(items=[{"item_code": self.batch_item, "qty": 1}])  # like MB-SINV-26-00002: paid
+		self.assertEqual(self.outstanding(earlier.sales_invoice), 0)
+		sale = [{"item_code": self.batch_item, "qty": 1}]
+		ret = [self.ret(self.batch_item, 1, earlier.sales_invoice, condition="Damaged")]
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "above your limit of 5"):
+				api.price_cart(self.trip.name, self.customer, [{"item_code": self.batch_item, "qty": 2, "discount_percentage": 6}])
+			with self.assertRaisesRegex(frappe.ValidationError, "only 1.0 .* can still be returned"):
+				api.price_cart(self.trip.name, self.customer, sale, returns_items=[{**ret[0], "qty": 2}])
+			priced = api.price_cart(self.trip.name, self.customer, sale, returns_items=ret)
+			self.assertEqual((priced["rounded_total"], priced["return_total"], priced["due_on_sale"]), (200, 200, 0))
+			result = api.submit_visit({"client_ref": "live-2", "mobile_trip": self.trip.name, "customer": self.customer,
+				"outcome": "Sale", "sale_items": sale, "return_items": ret, "collect_amount": 0})  # fmt: skip
+		visit = frappe.get_doc("Customer Visit", result["name"])
+		note = self.credit_note(visit)
+		self.assertEqual(len(visit.return_items), 1)
+		self.assertEqual((visit.payment_entry, visit.total_collected, visit.credit_applied), (None, 0, 200))
+		self.assertEqual((self.outstanding(visit.sales_invoice), self.outstanding(note.name)), (0, 0))
+		self.assertEqual((note.owner, note.return_against), (self.agent_a.user, earlier.sales_invoice))
+		self.assertEqual(frappe.db.get_value("Journal Entry", visit.credit_journal, "owner"), self.agent_a.user)
+		self.assertEqual({b.get("batch_no"): b.get("qty") for b in get_batch_qty(warehouse=self.customer_returns, item_code=self.batch_item)}, {self.batch_a: 1})
+
+	def test_live_run_visit_2_percent_discount_print_and_rejection_log(self):
+		"""MTRIP-26-00005 visit 2 as the real agent: a refused submit is logged for the supervisor, an
+		entered 5% invoice discount stays 5% on the invoice, and the prints split credit from cash."""
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, {"max_discount_pct": 5, "max_return_value_per_visit": 2000})
+		earlier = self.visit(items=[{"item_code": self.batch_item, "qty": 1}])
+		sale = [{"item_code": self.batch_item, "qty": 2}]
+		ret = [self.ret(self.batch_item, 1, earlier.sales_invoice, reason="Damaged", condition="Damaged")]
+		payload = {"client_ref": "live-3", "mobile_trip": self.trip.name, "customer": self.customer, "outcome": "Sale",
+			"sale_items": sale, "additional_discount_percentage": 5, "return_items": ret}  # fmt: skip
+
+		# 2 x 200 - 5% = 380, return credit 200: collecting the invoice total (380) instead of 180 is refused
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "Collect Now must be between 0 and the 180"):
+				api.submit_visit({**payload, "collect_amount": 380})
+			log = frappe.db.after_rollback._functions.pop()  # what the request's rollback would run
+			with patch.object(frappe.db, "commit") as commit:
+				log()
+			commit.assert_called_once()
+		rejection = frappe.get_last_doc("Mobile Visit Rejection", filters={"client_ref": "live-3"})
+		self.assertEqual(
+			(rejection.user, rejection.agent, rejection.mobile_trip, rejection.customer, rejection.outcome),
+			(self.agent_a.user, self.agent_a.name, self.trip.name, self.customer, "Sale"),
+		)
+		self.assertIn("Collect Now must be between 0 and the 180", rejection.message)
+		self.assertNotIn("<", rejection.message)
+		self.assertTrue(frappe.has_permission("Mobile Visit Rejection", "read", rejection, user=self.users.supervisor))
+		self.assertFalse(frappe.has_permission("Mobile Visit Rejection", "read", rejection, user=self.agent_a.user))
+
+		with as_user(self.agent_a.user):
+			result = api.submit_visit({**payload, "collect_amount": 180})
+		visit = frappe.get_doc("Customer Visit", result["name"])
+		si = frappe.get_doc("Sales Invoice", visit.sales_invoice)
+		note = self.credit_note(visit)
+		self.assertEqual((si.additional_discount_percentage, si.discount_amount, si.grand_total), (5, 20, 380))
+		self.assertEqual((visit.additional_discount_percentage, visit.discount_amount), (5, 20))
+		self.assertEqual((visit.total_collected, visit.credit_applied, self.outstanding(si.name)), (180, 200, 0))
+
+		def amounts(html):
+			return " ".join(frappe.utils.strip_html(html).split())
+
+		with as_user(self.agent_a.user):
+			invoice_html = amounts(frappe.get_print("Sales Invoice", si.name, print_format="Mobile Invoice 4in"))
+			note_html = amounts(frappe.get_print("Sales Invoice", note.name, print_format="Mobile Invoice 4in"))
+		self.assertRegex(invoice_html, r"Invoice discount \(5%\)\s*-\D*20\.00")
+		self.assertNotRegex(invoice_html, r"Invoice discount \(5%\)\s*-[^\d]*-")  # one minus sign, not "-Rs -20.00"
+		self.assertRegex(invoice_html, rf"Return credit \({note.name}\)\s*-\D*200\.00")
+		self.assertRegex(invoice_html, r"Paid \(cash\)\s*\D*180\.00")
+		self.assertNotRegex(invoice_html, r"Paid \(cash\) \D*380")
+		self.assertRegex(note_html, rf"Credit applied to {si.name}\s*\D*200\.00")
+		self.assertRegex(note_html, r"Credit left on account\s*\D*0\.00")
+		self.assertNotIn("Paid (cash)", note_html)
+
+	def test_return_picker_invoices_newest_first_with_qty_and_owed(self):
+		self.set_setting("allow_credit_sales", 1)
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "credit_limit_per_invoice", 1000)
+		first = self.visit(items=[{"item_code": self.plain_item, "qty": 2}])
+		second = self.visit(items=[{"item_code": self.plain_item, "qty": 1}, {"item_code": self.batch_item, "qty": 1}], collect=100)
+		self.visit(outcome="Return Only", return_items=[self.ret(self.plain_item, 2, first.sales_invoice)])  # all returned
+		with as_user(self.agent_a.user):
+			invoices = {i.name: i for i in api.get_customer_invoices(self.customer)}
+			order = [i.name for i in api.get_customer_invoices(self.customer)]
+		self.assertLess(order.index(second.sales_invoice), order.index(first.sales_invoice))
+		latest = invoices[second.sales_invoice]
+		self.assertEqual((latest.rounded_total, latest.outstanding_amount), (300, 200))
+		self.assertEqual(sorted((r.item_code, r.qty) for r in latest.returnable), sorted([(self.plain_item, 1), (self.batch_item, 1)]))
+		self.assertEqual(invoices[first.sales_invoice].returnable, [])
+
+	# prints (v0.6.1): Mobile Visit Bill, Mobile Invoice 4in, Mobile Return Note
+
+	def printed(self, doctype, name, print_format, user=None):
+		with as_user(user or self.agent_a.user):
+			return " ".join(frappe.utils.strip_html(frappe.get_print(doctype, name, print_format=print_format)).split())
+
+	def bill(self, visit):
+		return self.printed("Customer Visit", visit.name, "Mobile Visit Bill")
+
+	def invoice(self, name):
+		return self.printed("Sales Invoice", name, "Mobile Invoice 4in")
+
+	def note(self, name):
+		return self.printed("Sales Invoice", name, "Mobile Return Note")
+
+	def test_prints_sale_only(self):
+		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 2}])
+		bill = self.bill(visit)
+		for text in ("BILL", f"SALES · {visit.sales_invoice}", "Sales total", "Net payable", "Customer", "Agent", "_MS Test Agent A"):
+			self.assertIn(text, bill)
+		self.assertRegex(bill, r"Paid \(cash\)\s*\D*200\.00")
+		self.assertRegex(bill, r"Balance\s*\D*0\.00")
+		self.assertNotIn("RETURNS", bill)
+		self.assertNotIn("Return credit", bill)
+		invoice = self.invoice(visit.sales_invoice)
+		self.assertRegex(invoice, r"Paid \(cash\)\s*\D*200\.00")
+		self.assertNotIn("Return credit", invoice)
+		self.assertIn(f"{visit.sales_invoice} is not a return note.", self.note(visit.sales_invoice))
+
+	def test_prints_sale_and_return_with_split_set_off(self):
+		self.set_setting("allow_credit_sales", 1)
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "credit_limit_per_invoice", 1000)
+		earlier = self.visit(items=[{"item_code": self.plain_item, "qty": 2}], collect=150)  # 50 left open
+		visit = self.visit(
+			items=[{"item_code": self.plain_item, "qty": 1}],
+			return_items=[self.ret(self.plain_item, 1, earlier.sales_invoice, reason="Damaged", condition="Damaged", remarks="torn")],
+		)
+		note = self.credit_note(visit).name
+		sale = visit.sales_invoice
+		self.assertEqual((visit.credit_applied, visit.total_collected), (100, 50))
+
+		bill = self.bill(visit)
+		for pattern in (
+			rf"SALES · {sale}", rf"RETURNS · {note}", rf"against {earlier.sales_invoice} · Damaged · Damaged · torn",
+			r"-\D*100\.00", r"Return total\s*-\D*100\.00",
+			rf"Return credit applied {earlier.sales_invoice}\s*-\D*50\.00", rf"Return credit applied {sale}\s*-\D*50\.00",
+			r"Credit left on account\s*\D*0\.00", r"Net payable\s*\D*50\.00", r"Paid \(cash\)\s*\D*50\.00",
+			r"Balance\s*\D*0\.00", r"Previous Outstanding\s*\D*0\.00", r"Total Due\s*\D*0\.00",
+		):  # fmt: skip
+			self.assertRegex(bill, pattern)
+		self.assertLess(bill.index("SALES"), bill.index("RETURNS"))
+
+		# the set-off is never cash, on either invoice it paid
+		invoice = self.invoice(sale)
+		self.assertRegex(invoice, rf"Return credit \({note}\)\s*-\D*50\.00")
+		self.assertRegex(invoice, r"Paid \(cash\)\s*\D*50\.00")
+		self.assertNotRegex(invoice, r"Paid \(cash\)\s*\D*100\.00")
+		earlier_print = self.invoice(earlier.sales_invoice)
+		self.assertRegex(earlier_print, rf"Return credit \({note}\)\s*-\D*50\.00")
+		self.assertRegex(earlier_print, r"Paid \(cash\)\s*\D*150\.00")
+
+		returned = self.note(note)
+		for pattern in (
+			r"RETURN NOTE", rf"Against\s*{earlier.sales_invoice}", rf"Visit\s*{visit.name}", r"Damaged · Damaged · torn",
+			r"Total credit\s*\D*100\.00", rf"Credit applied to {earlier.sales_invoice}\s*\D*50\.00",
+			rf"Credit applied to {sale}\s*\D*50\.00", r"Credit left on account\s*\D*0\.00\s*Customer\s*Agent",
+		):  # fmt: skip
+			self.assertRegex(returned, pattern)
+		self.assertNotIn("Paid (cash)", returned)
+
+		# Print All (/mobile-sales-print): bill → invoice → return note, as the agent; never for another agent
+		status, html = self.render_print_all(visit.name, self.agent_a.user)
+		self.assertEqual(status, 200, html[:1500])
+		self.assertEqual(
+			re.findall(r'data-format="([^"]+)"', html), ["Mobile Visit Bill", "Mobile Invoice 4in", "Mobile Return Note"]
+		)
+		self.assertEqual(re.findall(r'data-name="([^"]+)"', html), [visit.name, sale, note])
+		self.assertIn('<div class="mi4">', html)  # rendered, not escaped
+		self.assertIn("window.print()", html)
+		status, html = self.render_print_all(visit.name, self.users.supervisor)
+		self.assertEqual(status, 200, html[:1500])
+		status, _html = self.render_print_all(visit.name, self.agent_b.user)
+		self.assertNotEqual(status, 200)
+
+	def render_print_all(self, visit, user):
+		"""Full /mobile-sales-print render (context + template) as a logged-in user (rule 17)."""
+		if hasattr(frappe.local, "request"):
+			self.addCleanup(setattr, frappe.local, "request", frappe.local.request)
+		else:  # no request outside a web request: put it back that way, or later get_print() calls break
+			self.addCleanup(delattr, frappe.local, "request")
+		frappe.local.request = Request(EnvironBuilder(path="/mobile-sales-print", query_string=f"visit={visit}", base_url="http://localhost").get_environ())
+		with as_user(user), patch.object(frappe.db, "commit"):
+			frappe.local.form_dict = frappe._dict(visit=visit)  # set_user resets form_dict: a request's query
+			response = get_response("mobile-sales-print")
+		return response.status_code, response.get_data(as_text=True)
+
+	def test_prints_return_only_with_credit_left(self):
+		earlier = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])  # paid: nothing to set off
+		visit = self.visit(outcome="Return Only", return_items=[self.ret(self.plain_item, 1, earlier.sales_invoice)])
+		note = self.credit_note(visit).name
+		self.assertFalse(visit.credit_journal)
+		bill = self.bill(visit)
+		self.assertIn(f"RETURNS · {note}", bill)
+		self.assertRegex(bill, r"Credit left on account\s*\D*100\.00")
+		for text in ("SALES", "Net payable", "Return credit applied"):
+			self.assertNotIn(text, bill)
+		returned = self.note(note)
+		self.assertRegex(returned, r"Total credit\s*\D*100\.00")
+		self.assertRegex(returned, r"Credit left on account\s*\D*100\.00")
+		self.assertIn("Damaged · Resaleable", returned)
+		self.assertNotIn("Credit applied to", returned)
+		self.assertRegex(self.invoice(note), r"Credit left on account\s*\D*100\.00")
+
+	def test_prints_discounted_sale_with_rounding(self):
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "max_discount_pct", 10)
+		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 1, "discount_amount": 0.5}], additional_discount_percentage=5)
+		si = frappe.get_doc("Sales Invoice", visit.sales_invoice)
+		self.assertEqual((si.additional_discount_percentage, si.grand_total), (5, 94.52))  # 99.50 - 5% (4.98)
+		rounded = bool(si.rounding_adjustment) and si.rounded_total != si.grand_total
+		for text in (self.bill(visit), self.invoice(si.name)):
+			self.assertIn("List", text)
+			self.assertIn("Disc. 0.50%", text)
+			self.assertRegex(text, r"Invoice discount \(5%\)\s*-\D*4\.98")
+			self.assertNotRegex(text, r"Invoice discount \(5%\)\s*-[^\d]*-")
+			self.assertEqual("Rounding adjustment" in text, rounded)
+			self.assertRegex(text, rf"Paid \(cash\)\s*\D*{flt(invoicing.payable_amount(si)):,.2f}")
 
 	def standard_invoice(self, rate):
 		si = frappe.get_doc(

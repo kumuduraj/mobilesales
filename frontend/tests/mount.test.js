@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMemoryHistory } from "vue-router"
 import { createMobileApp, routes } from "../src/app"
+import { session, visitPrints } from "../src/state"
 
 const AGENT = {
 	name: "MSA-0001",
@@ -123,8 +124,32 @@ const API = {
 			rounded_total: 0,
 			total_collected: 0,
 		},
+		{
+			name: "CV-26-000004",
+			docstatus: 1,
+			visit_datetime: "2026-11-01 13:00:00",
+			customer: "Pilot Customer 1",
+			customer_name: "Pilot Customer 1",
+			off_route: 0,
+			outcome: "Sale",
+			no_sale_reason: null,
+			sales_invoice: "MB-SINV-26-00004",
+			payment_entry: "ACC-PAY-2026-00007",
+			credit_notes: "MB-SRET-26-00002",
+			return_total: 1325,
+			credit_applied: 1325,
+			grand_total: 2517.5,
+			rounded_total: 2518,
+			total_collected: 1193,
+		},
 	],
-	get_customer_invoices: [{ name: "MB-SINV-26-00002", posting_date: "2026-11-01", grand_total: 1325 }],
+	get_customer_invoices: [
+		{ name: "MB-SINV-26-00002", posting_date: "2026-11-02", grand_total: 1325, rounded_total: 1325, outstanding_amount: 0,
+			returnable: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 1 }] },
+		{ name: "ACC-SINV-2026-00001", posting_date: "2026-11-01", grand_total: 1325, rounded_total: 1325, outstanding_amount: 825,
+			returnable: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 1 }] },
+		{ name: "MB-SINV-26-00001", posting_date: "2026-11-01", grand_total: 2650, rounded_total: 2650, outstanding_amount: 0, returnable: [] },
+	],
 	get_returnable_lines: [
 		{ sales_invoice_item: "row-1", item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", returnable_qty: 1, rate: 1325, batches: [{ batch_no: "ARCP003-261016-01", qty: 1 }] },
 	],
@@ -195,6 +220,11 @@ API.save_settlement = {
 	warnings: ["10 Kg Kochchi Chicken Meat will be recorded as MISSING", "Cash is SHORT by LKR 25.00"],
 }
 API.submit_settlement_for_verification = { ...API.save_settlement, workflow_state: "Pending Store", editable: false }
+API.submit_visit = {
+	name: "CV-26-000008", docstatus: 1, outcome: "Sale", customer: "Pilot Customer 1", customer_name: "Pilot Customer 1",
+	sales_invoice: "MB-SINV-26-00004", payment_entry: null, grand_total: 1325, rounded_total: 1325, total_collected: 0,
+	return_total: 1325, credit_applied: 1325, credit_notes: "MB-SRET-26-00001", credit_journal: "ACC-JV-2026-00010", duplicate: false,
+}
 
 const SCENARIOS = [
 	{ title: "agent with a Loaded trip", boot: boot(AGENT, trip("Loaded")), expect: "MTRIP-26-00003" },
@@ -221,6 +251,7 @@ afterEach(() => vi.restoreAllMocks())
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
 
 async function render(bootData, path, interact) {
+	Object.assign(session, { ctx: null, loading: false, error: null }) // module state: no context from an earlier render
 	window.ms_boot = bootData
 	window.csrf_token = bootData.csrf_token
 	document.body.innerHTML = '<div id="app"></div>'
@@ -364,6 +395,7 @@ describe("visit wizard (Phase 5b)", () => {
 			for (let i = 0; i < 3; i++) await settle()
 			choose(card.querySelectorAll("select")[1], "row-1")
 			type(card.querySelector("input[type=number]"), "1")
+			choose(card.querySelectorAll("select")[2], "Damaged")
 			choose(card.querySelectorAll("select")[3], "Damaged")
 			await settle()
 			click(root, "+ Add return")
@@ -386,11 +418,33 @@ describe("visit wizard (Phase 5b)", () => {
 		expect(priceCalls.length).toBeGreaterThan(0)
 	})
 
-	it("History offers the credit note reprint and shows returns", async () => {
-		const text = await render(boot(AGENT, trip("In Field")), "/history")
+	it("History shows each visit's prints only when the document exists, Print All in order", async () => {
+		const cards = {}
+		const text = await render(boot(AGENT, trip("In Field")), "/history", async (root) => {
+			for (const card of root.querySelectorAll(".card")) {
+				const name = (card.textContent.match(/CV-26-\d+/) || [])[0]
+				if (name) cards[name] = [...card.querySelectorAll("a[data-print]")].map((a) => [a.dataset.print, a.textContent.trim(), a.getAttribute("href")])
+			}
+		})
 		expect(problems).toEqual([])
-		expect(text).toContain("Credit note")
 		expect(text).toContain("returns")
+		const keys = (name) => cards[name].map(([key]) => key)
+		// sale only (invoice + receipt): bill, invoice, all, receipt
+		expect(keys("CV-26-000001")).toEqual(["bill", "invoice", "all", "receipt"])
+		// shop closed: nothing to print
+		expect(keys("CV-26-000002")).toEqual([])
+		// return only: bill, return note, all
+		expect(keys("CV-26-000003")).toEqual(["bill", "note:MB-SRET-26-00001", "all"])
+		// sale + return: bill (primary), invoice, return note, all, receipt
+		expect(keys("CV-26-000004")).toEqual(["bill", "invoice", "note:MB-SRET-26-00002", "all", "receipt"])
+		const [bill, invoice, note, all] = cards["CV-26-000004"]
+		expect(bill[1]).toBe("Print Bill")
+		expect(bill[2]).toContain("doctype=Customer+Visit&name=CV-26-000004&format=Mobile+Visit+Bill")
+		expect(invoice[1]).toBe("Print Invoice")
+		expect(invoice[2]).toContain("name=MB-SINV-26-00004&format=Mobile+Invoice+4in")
+		expect(note[1]).toBe("Print Return Note")
+		expect(note[2]).toContain("name=MB-SRET-26-00002&format=Mobile+Return+Note")
+		expect(all).toEqual(["all", "Print All", "/mobile-sales-print?visit=CV-26-000004"])
 	})
 })
 
@@ -442,5 +496,380 @@ describe("settlement screen", () => {
 		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
 		expect(seen.afterContinue.submits).toBe(1)
 		expect(seen.afterContinue.text).toContain("Submitted for verification")
+	})
+})
+
+describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
+	const settleMore = async () => {
+		for (let i = 0; i < 4; i++) await settle()
+	}
+	const button = (root, label) => {
+		const found = [...root.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(label))
+		if (!found) throw new Error(`no button "${label}" in: ${root.textContent.replace(/\s+/g, " ").slice(0, 400)}`)
+		return found
+	}
+	const choose = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("change"))
+	}
+
+	it("blocks Next while a return is filled in but not added, then submits it", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				for (let i = 0; i < 3; i++) {
+					button(root, "Next").click()
+					await settle()
+				}
+				button(root, "Sale").click()
+				await settle()
+				button(root, "+").click() // 1 Kg in the cart
+				await new Promise((resolve) => setTimeout(resolve, 400)) // price_cart is debounced (350 ms)
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				const form = root.querySelector(".rounded-lg.border")
+				if (!form) throw new Error(`no return form in: ${root.textContent.replace(/\s+/g, " ").slice(0, 600)}`)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged") // condition
+				choose(form.querySelectorAll("select")[3], "Damaged") // reason
+				await settle()
+				seen.nextDisabled = button(root, "Next").disabled
+				seen.hint = root.textContent.includes("This return is not added yet")
+				button(root, "Next").click() // must not move on
+				await settle()
+				seen.stillOnReturns = root.textContent.includes("Returns from the customer")
+				button(root, "+ Add return").click()
+				await settleMore()
+				seen.nextAfterAdd = button(root, "Next").disabled
+				button(root, "Next").click()
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				seen.review = root.textContent.replace(/\s+/g, " ")
+				button(root, "Submit visit").click()
+				await settleMore()
+				seen.submitsBeforeConfirm = globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("submit_visit")).length
+				button(root.querySelector("[role=dialog]"), "Confirm and submit").click()
+				await settleMore()
+				seen.done = root.textContent.replace(/\s+/g, " ")
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		const submit = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith("submit_visit"))
+		const payload = JSON.parse(submit[1].body.get("payload"))
+		expect(problems).toEqual([])
+		expect(seen).toMatchObject({ nextDisabled: true, hint: true, stillOnReturns: true, nextAfterAdd: false, submitsBeforeConfirm: 0 })
+		expect(seen.review).toContain("Return: Kochchi Chicken Meat × 1 Kg")
+		expect(seen.review).toContain("Reason: Damaged · Condition: Damaged")
+		expect(payload.return_items).toEqual([
+			{ item_code: "ARCP003", qty: 1, uom: "Kg", against_invoice: "MB-SINV-26-00002", sales_invoice_item: "row-1",
+				return_reason: "Damaged", condition: "Damaged", remarks: null },
+		])
+		expect(payload.sale_items).toEqual([{ item_code: "ARCP003", qty: 1, discount_percentage: 0, discount_amount: 0 }])
+		expect(seen.done).toContain("Print Bill")
+		expect(seen.done).toContain("Print Invoice")
+		expect(seen.done).toContain("Print Return Note")
+		expect(seen.done).toContain("Print All")
+		expect(seen.done).toContain("Return credit")
+	})
+	const toReturns = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			button(root, "Next").click()
+			await settle()
+		}
+		button(root, "Sale").click()
+		await settle()
+		button(root, "+").click()
+		await new Promise((resolve) => setTimeout(resolve, 400)) // price_cart is debounced (350 ms)
+		await settleMore()
+		button(root, "Next").click()
+		await settleMore()
+		return root.querySelector(".rounded-lg.border")
+	}
+
+	it("starts with an empty invoice picker and says what is missing before + Add return", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				const text = () => root.textContent.replace(/\s+/g, " ")
+				seen.picker = form.querySelectorAll("select")[0].value
+				seen.start = text()
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				seen.afterInvoice = text()
+				seen.nextAfterInvoice = button(root, "Next").disabled
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "2"
+				qtyInput.dispatchEvent(new Event("input"))
+				await settle()
+				seen.tooMuch = text()
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Resaleable")
+				choose(form.querySelectorAll("select")[3], "Other")
+				await settle()
+				seen.other = text()
+				seen.addDisabled = button(root, "+ Add return").disabled
+				const remarks = form.querySelector("input:not([type=number]):not([type=search])")
+				remarks.value = "torn pack"
+				remarks.dispatchEvent(new Event("input"))
+				await settle()
+				seen.addEnabled = !button(root, "+ Add return").disabled
+				button(root, "+ Add return").click()
+				await settleMore()
+				seen.card = text()
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		expect(seen.picker).toBe("")
+		expect(seen.start).toContain("Choose invoice…")
+		expect(seen.start).not.toContain("This return is not added yet")
+		expect(seen.afterInvoice).toContain("Choose the item.")
+		expect(seen.afterInvoice).not.toContain("This return is not added yet")
+		expect(seen.nextAfterInvoice).toBe(false)
+		expect(seen.tooMuch).toContain("At most 1 Kg can be returned from this invoice.")
+		expect(seen.tooMuch).toContain("This return is not added yet")
+		expect(seen.other).toContain("Remarks required for reason Other.")
+		expect(seen.addDisabled).toBe(true)
+		expect(seen.addEnabled).toBe(true)
+		expect(seen.card).toContain("Reason: Other")
+		expect(seen.card).toContain("Condition: Resaleable")
+		expect(seen.card).toContain("Remarks: torn pack")
+	})
+
+	it("confirm dialog summarises sale lines, discounts, returns and cash before submitting", async () => {
+		const originalContext = API.get_context
+		const originalPrice = API.price_cart
+		API.get_context = boot(AGENT, trip("In Field")).context
+		API.price_cart = {
+			...originalPrice,
+			lines: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 2, price_list_rate: 1325, pricing_rule_rate: 1325,
+				discount_percentage: 0, discount_amount: 0, rate: 1325, amount: 2650, enough_stock: true }],
+			net_total: 2517.5, grand_total: 2517.5, rounded_total: 2518, discount_amount: 132.5, additional_discount_percentage: 5,
+			credit_on_sale: 1325, credit_on_previous: {}, due_on_sale: 1193,
+		}
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged")
+				choose(form.querySelectorAll("select")[3], "Damaged")
+				await settle()
+				button(root, "+ Add return").click()
+				await settleMore()
+				button(root, "Next").click() // collection: collect = due 1193
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				button(root, "Submit visit").click()
+				await settleMore()
+				const dialog = root.querySelector("[role=dialog]")
+				seen.dialog = dialog?.textContent.replace(/\s+/g, " ")
+				seen.focused = document.activeElement?.textContent.trim()
+				button(dialog, "Cancel").click()
+				await settle()
+				seen.afterCancel = { dialog: !!root.querySelector("[role=dialog]"), submits: globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("submit_visit")).length }
+			})
+		} finally {
+			API.get_context = originalContext
+			API.price_cart = originalPrice
+		}
+		expect(problems).toEqual([])
+		expect(seen.dialog).toContain("Kochchi Chicken Meat × 2 Kg")
+		expect(seen.dialog).toContain("Invoice discount (5%)")
+		expect(seen.dialog).toContain("132.50")
+		expect(seen.dialog).toContain("Reason: Damaged · Condition: Damaged")
+		expect(seen.dialog).toContain("Return credit applied")
+		expect(seen.dialog).toContain("Cash to collect now")
+		expect(seen.dialog).toContain("1,193.00")
+		expect(seen.focused).toBe("Cancel")
+		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
+	})
+})
+
+describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () => {
+	const settleMore = async () => {
+		for (let i = 0; i < 4; i++) await settle()
+	}
+	const button = (root, label) => [...root.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(label))
+	const choose = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("change"))
+	}
+	const toReturns = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			button(root, "Next").click()
+			await settle()
+		}
+		button(root, "Sale").click()
+		await settle()
+		button(root, "+").click()
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		await settleMore()
+		button(root, "Next").click()
+		await settleMore()
+		return root.querySelector(".rounded-lg.border")
+	}
+
+	it("labels each invoice with date, qty, total and what is owed, newest first", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				seen.options = [...form.querySelectorAll("select")[0].options].map((o) => o.textContent.trim())
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		expect(seen.options).toEqual([
+			"Choose invoice…",
+			"No invoice (item without batches)",
+			"MB-SINV-26-00002 · 02-11 · 1 Kg · 1,325 · paid",
+			"ACC-SINV-2026-00001 · 01-11 · 1 Kg · 1,325 · owes 825",
+			"MB-SINV-26-00001 · 01-11 · all returned · 2,650 · paid",
+		])
+	})
+
+	it("reason and condition start empty on every new return line; Add waits for both", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const lines = []
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				const selects = () => form.querySelectorAll("select")
+				const condition = () => form.querySelector('select[aria-label="Condition"]')
+				const reason = () => form.querySelector('select[aria-label="Reason"]')
+				const state = () => ({
+					condition: [condition().value, condition().selectedOptions[0]?.textContent.trim()],
+					reason: [reason().value, reason().selectedOptions[0]?.textContent.trim()],
+					addDisabled: button(root, "+ Add return").disabled,
+					text: root.textContent.replace(/\s+/g, " "),
+				})
+				const fillLine = async () => {
+					choose(selects()[0], "MB-SINV-26-00002")
+					await settleMore()
+					choose(selects()[1], "row-1")
+					const qtyInput = form.querySelector("input[type=number]")
+					qtyInput.value = "1"
+					qtyInput.dispatchEvent(new Event("input"))
+					await settle()
+				}
+				for (let line = 0; line < 2; line++) {
+					const seen = { start: state() }
+					await fillLine()
+					seen.filled = state() // item and qty only
+					choose(condition(), "Damaged")
+					await settle()
+					seen.conditionOnly = state()
+					choose(condition(), "")
+					choose(reason(), "Damaged")
+					await settle()
+					seen.reasonOnly = state()
+					choose(condition(), "Damaged")
+					await settle()
+					seen.both = state()
+					button(root, "+ Add return").click()
+					await settleMore()
+					lines.push(seen)
+				}
+				lines.push({ after: state() })
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		for (const seen of lines.slice(0, 2)) {
+			expect(seen.start.condition).toEqual(["", "Choose condition…"])
+			expect(seen.start.reason).toEqual(["", "Choose reason…"])
+			expect(seen.filled.addDisabled).toBe(true)
+			expect(seen.conditionOnly).toMatchObject({ addDisabled: true, reason: ["", "Choose reason…"] })
+			expect(seen.conditionOnly.text).toContain("Choose a reason.")
+			expect(seen.reasonOnly.addDisabled).toBe(true)
+			expect(seen.reasonOnly.text).toContain("Choose the condition.")
+			expect(seen.both.addDisabled).toBe(false)
+		}
+		// the second line did not inherit the first line's reason / condition, and neither does a third
+		expect(lines[2].after.condition).toEqual(["", "Choose condition…"])
+		expect(lines[2].after.reason).toEqual(["", "Choose reason…"])
+		expect(lines[2].after.text.match(/Reason: Damaged/g)).toHaveLength(2)
+	})
+
+	it("sets Collect Now to 0 and says why when the return credit covers the sale", async () => {
+		const originalContext = API.get_context
+		const originalPrice = API.price_cart
+		const credit = boot(AGENT, trip("In Field"))
+		credit.context.settings = { ...credit.context.settings, allow_credit_sales: 1 }
+		API.get_context = credit.context
+		API.price_cart = { ...originalPrice, rounded_total: 1325, grand_total: 1325, credit_on_sale: 1325, due_on_sale: 0, credit_applied: 1325 }
+		const seen = {}
+		try {
+			await render(credit, "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged")
+				choose(form.querySelectorAll("select")[3], "Damaged")
+				await settle()
+				button(root, "+ Add return").click()
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				const collect = [...root.querySelectorAll("input[type=number]")][0]
+				seen.value = collect.value
+				seen.readonly = collect.readOnly
+				seen.text = root.textContent.replace(/\s+/g, " ")
+			})
+		} finally {
+			API.get_context = originalContext
+			API.price_cart = originalPrice
+		}
+		expect(problems).toEqual([])
+		expect(seen.value).toBe("0")
+		expect(seen.readonly).toBe(true)
+		expect(seen.text).toContain("Return credit covers this invoice — nothing to collect.")
+	})
+})
+
+describe("visit prints (v0.6.1)", () => {
+	it("lists bill → invoice → each return note, Print All only for more than one document", () => {
+		const keys = (visit) => visitPrints(visit).map((p) => p.key)
+		expect(keys({ name: "CV-1", outcome: "No Sale" })).toEqual([])
+		expect(keys({ name: "CV-2", sales_invoice: "SI-1" })).toEqual(["bill", "invoice", "all"])
+		expect(keys({ name: "CV-3", credit_notes: "RN-1" })).toEqual(["bill", "note:RN-1", "all"])
+		expect(keys({ name: "CV-4", payment_entry: "PE-1" })).toEqual(["bill"]) // collection only: the bill alone
+		const two = visitPrints({ name: "CV-5", sales_invoice: "SI-1", credit_notes: "RN-1, RN-2" })
+		expect(two.map((p) => p.key)).toEqual(["bill", "invoice", "note:RN-1", "note:RN-2", "all"])
+		expect(two.map((p) => p.label)).toEqual(["Print Bill", "Print Invoice", "Print Return Note RN-1", "Print Return Note RN-2", "Print All"])
+		expect(two.filter((p) => p.primary).map((p) => p.key)).toEqual(["bill"])
+		expect(two.at(-1).url).toBe("/mobile-sales-print?visit=CV-5")
 	})
 })

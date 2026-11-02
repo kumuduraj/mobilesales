@@ -129,11 +129,13 @@ def apply_manual_discounts(visit, si):
 
 	if flt(visit.get("discount_amount")) or flt(visit.get("additional_discount_percentage")):
 		si.apply_discount_on = "Net Total"
-		if flt(visit.get("discount_amount")):
+		# An entered percentage wins: validate copies the computed amount back next to it, and the
+		# submit rebuild must not turn "5%" into a fixed amount (live run MTRIP-26-00005).
+		if flt(visit.get("additional_discount_percentage")):
+			si.additional_discount_percentage = flt(visit.additional_discount_percentage)
+		else:
 			si.discount_amount = flt(visit.discount_amount)
 			si.additional_discount_percentage = 0
-		else:
-			si.additional_discount_percentage = flt(visit.additional_discount_percentage)
 	si.calculate_taxes_and_totals()
 	manual += flt(si.discount_amount)
 	si.flags.manual_discount = frappe._dict(

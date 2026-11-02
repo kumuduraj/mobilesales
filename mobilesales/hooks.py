@@ -77,10 +77,14 @@ required_apps = ["erpnext"]
 # ----------
 
 # add methods and filters to jinja environment
-# jinja = {
-# 	"methods": "mobilesales.utils.jinja_methods",
-# 	"filters": "mobilesales.utils.jinja_filters"
-# }
+# The 4-inch prints read their credit / cash figures from here (one place, unit-tested).
+jinja = {
+	"methods": [
+		"mobilesales.services.prints.mobile_invoice_print",
+		"mobilesales.services.prints.mobile_return_note_print",
+		"mobilesales.services.prints.mobile_visit_bill_print",
+	],
+}
 
 # Installation
 # ------------

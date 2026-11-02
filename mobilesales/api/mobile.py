@@ -5,11 +5,12 @@ ownership of the trip / visit / settlement it touches. Inputs are validated and 
 on the server; client totals are never trusted."""
 
 import base64
+from functools import partial
 
 import frappe
 from frappe import _
 from frappe.model.workflow import apply_workflow
-from frappe.utils import cint, flt, now_datetime
+from frappe.utils import cint, cstr, flt, now_datetime, strip_html
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -318,15 +319,24 @@ def get_returnable_lines(invoice: str, customer: str) -> list[dict]:
 
 @frappe.whitelist()
 def get_customer_invoices(customer: str) -> list[dict]:
-	"""The customer's recent submitted, non-return invoices (return picker on the phone)."""
+	"""The customer's recent submitted, non-return invoices for the return picker, newest first, with what
+	tells look-alike numbers apart: date, qty still returnable per item, total and what is still owed."""
 	require_roles()
-	return frappe.get_all(
+	invoices = frappe.get_all(
 		"Sales Invoice",
 		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0},
-		fields=["name", "posting_date", "grand_total"],
-		order_by="posting_date desc, name desc",
+		fields=["name", "posting_date", "grand_total", "rounded_total", "outstanding_amount"],
+		order_by="posting_date desc, posting_time desc, creation desc",
 		limit_page_length=SEARCH_LIMIT,
 	)
+	for invoice in invoices:
+		qty_by_item = {}
+		for line in returns.returnable_lines(invoice.name):
+			key = (line.item_code, line.uom)
+			qty_by_item.setdefault(key, frappe._dict(item_code=line.item_code, item_name=line.item_name, uom=line.uom, qty=0))
+			qty_by_item[key].qty += flt(line.returnable_qty)
+		invoice.returnable = list(qty_by_item.values())
+	return invoices
 
 
 @frappe.whitelist()
@@ -568,9 +578,39 @@ def _visit_summary(visit) -> dict:
 
 @frappe.whitelist()
 def submit_visit(payload: str | dict) -> dict:
-	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref."""
+	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref.
+	A refused visit is logged in Mobile Visit Rejection, so the supervisor sees what the agent was told."""
 	require_roles()
 	data = frappe._dict(frappe.parse_json(payload) or {})
+	try:
+		return _submit_visit(data)
+	except frappe.ValidationError as e:
+		frappe.db.after_rollback.add(partial(log_rejection, data, e))  # `e` is unbound after the except block
+		raise
+
+
+def log_rejection(data, error):
+	"""Runs after the request's rollback (the visit itself is gone), in its own small transaction."""
+	try:
+		frappe.get_doc(
+			{
+				"doctype": "Mobile Visit Rejection",
+				"user": frappe.session.user,
+				"agent": (session_agent() or {}).get("name"),
+				"mobile_trip": data.mobile_trip if data.mobile_trip and frappe.db.exists("Mobile Trip", data.mobile_trip) else None,
+				"customer": data.customer if data.customer and frappe.db.exists("Customer", data.customer) else None,
+				"outcome": cstr(data.outcome)[:140],
+				"client_ref": cstr(data.client_ref)[:140],
+				"message": strip_html(cstr(error)).strip()[:2000] or error.__class__.__name__,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		# best effort: the agent already gets the message; never hide it behind a logging failure
+		frappe.db.rollback()
+
+
+def _submit_visit(data) -> dict:
 	client_ref = (data.client_ref or "").strip()
 	if not client_ref or len(client_ref) > 140:
 		frappe.throw(_("client_ref is required."))

@@ -1,0 +1,102 @@
+{
+ "actions": [],
+ "creation": "2026-11-02 21:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-11-02 21:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mobile Sales",
+ "owner": "Administrator",
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "in_create": 1,
+ "autoname": "format:MVR-{YY}-{#####}",
+ "naming_rule": "Expression",
+ "description": "A visit the server refused (validation message), logged so the supervisor can see what the agent was told.",
+ "name": "Mobile Visit Rejection",
+ "title_field": "message",
+ "field_order": [
+  "user",
+  "agent",
+  "mobile_trip",
+  "customer",
+  "outcome",
+  "client_ref",
+  "message"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "label": "User",
+   "read_only": 1,
+   "options": "User",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "agent",
+   "fieldtype": "Link",
+   "label": "Agent",
+   "read_only": 1,
+   "options": "Mobile Sales Agent",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "mobile_trip",
+   "fieldtype": "Link",
+   "label": "Mobile Trip",
+   "read_only": 1,
+   "options": "Mobile Trip",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "read_only": 1,
+   "options": "Customer",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "outcome",
+   "fieldtype": "Data",
+   "label": "Outcome",
+   "read_only": 1
+  },
+  {
+   "fieldname": "client_ref",
+   "fieldtype": "Data",
+   "label": "Client Ref",
+   "read_only": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Small Text",
+   "label": "Message",
+   "read_only": 1,
+   "in_list_view": 1
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "delete": 1,
+   "report": 1,
+   "export": 1
+  },
+  {
+   "role": "Mobile Sales Supervisor",
+   "read": 1,
+   "report": 1,
+   "export": 1
+  }
+ ]
+}
