@@ -143,7 +143,13 @@ const API = {
 			total_collected: 1193,
 		},
 	],
-	get_customer_invoices: [{ name: "MB-SINV-26-00002", posting_date: "2026-11-01", grand_total: 1325 }],
+	get_customer_invoices: [
+		{ name: "MB-SINV-26-00002", posting_date: "2026-11-02", grand_total: 1325, rounded_total: 1325, outstanding_amount: 0,
+			returnable: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 1 }] },
+		{ name: "ACC-SINV-2026-00001", posting_date: "2026-11-01", grand_total: 1325, rounded_total: 1325, outstanding_amount: 825,
+			returnable: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 1 }] },
+		{ name: "MB-SINV-26-00001", posting_date: "2026-11-01", grand_total: 2650, rounded_total: 2650, outstanding_amount: 0, returnable: [] },
+	],
 	get_returnable_lines: [
 		{ sales_invoice_item: "row-1", item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", returnable_qty: 1, rate: 1325, batches: [{ batch_no: "ARCP003-261016-01", qty: 1 }] },
 	],
@@ -697,6 +703,91 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 		expect(seen.dialog).toContain("1,193.00")
 		expect(seen.focused).toBe("Cancel")
 		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
+	})
+})
+
+describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () => {
+	const settleMore = async () => {
+		for (let i = 0; i < 4; i++) await settle()
+	}
+	const button = (root, label) => [...root.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(label))
+	const choose = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("change"))
+	}
+	const toReturns = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			button(root, "Next").click()
+			await settle()
+		}
+		button(root, "Sale").click()
+		await settle()
+		button(root, "+").click()
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		await settleMore()
+		button(root, "Next").click()
+		await settleMore()
+		return root.querySelector(".rounded-lg.border")
+	}
+
+	it("labels each invoice with date, qty, total and what is owed, newest first", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				seen.options = [...form.querySelectorAll("select")[0].options].map((o) => o.textContent.trim())
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		expect(seen.options).toEqual([
+			"Choose invoice…",
+			"No invoice (item without batches)",
+			"MB-SINV-26-00002 · 02-11 · 1 Kg · 1,325 · paid",
+			"ACC-SINV-2026-00001 · 01-11 · 1 Kg · 1,325 · owes 825",
+			"MB-SINV-26-00001 · 01-11 · all returned · 2,650 · paid",
+		])
+	})
+
+	it("sets Collect Now to 0 and says why when the return credit covers the sale", async () => {
+		const originalContext = API.get_context
+		const originalPrice = API.price_cart
+		const credit = boot(AGENT, trip("In Field"))
+		credit.context.settings = { ...credit.context.settings, allow_credit_sales: 1 }
+		API.get_context = credit.context
+		API.price_cart = { ...originalPrice, rounded_total: 1325, grand_total: 1325, credit_on_sale: 1325, due_on_sale: 0, credit_applied: 1325 }
+		const seen = {}
+		try {
+			await render(credit, "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[3], "Damaged")
+				await settle()
+				button(root, "+ Add return").click()
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				const collect = [...root.querySelectorAll("input[type=number]")][0]
+				seen.value = collect.value
+				seen.readonly = collect.readOnly
+				seen.text = root.textContent.replace(/\s+/g, " ")
+			})
+		} finally {
+			API.get_context = originalContext
+			API.price_cart = originalPrice
+		}
+		expect(problems).toEqual([])
+		expect(seen.value).toBe("0")
+		expect(seen.readonly).toBe(true)
+		expect(seen.text).toContain("Return credit covers this invoice — nothing to collect.")
 	})
 })
 

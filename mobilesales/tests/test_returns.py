@@ -472,6 +472,21 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		self.assertRegex(note_html, r"Credit left on account\s*\D*0\.00")
 		self.assertNotIn("Paid (cash)", note_html)
 
+	def test_return_picker_invoices_newest_first_with_qty_and_owed(self):
+		self.set_setting("allow_credit_sales", 1)
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "credit_limit_per_invoice", 1000)
+		first = self.visit(items=[{"item_code": self.plain_item, "qty": 2}])
+		second = self.visit(items=[{"item_code": self.plain_item, "qty": 1}, {"item_code": self.batch_item, "qty": 1}], collect=100)
+		self.visit(outcome="Return Only", return_items=[self.ret(self.plain_item, 2, first.sales_invoice)])  # all returned
+		with as_user(self.agent_a.user):
+			invoices = {i.name: i for i in api.get_customer_invoices(self.customer)}
+			order = [i.name for i in api.get_customer_invoices(self.customer)]
+		self.assertLess(order.index(second.sales_invoice), order.index(first.sales_invoice))
+		latest = invoices[second.sales_invoice]
+		self.assertEqual((latest.rounded_total, latest.outstanding_amount), (300, 200))
+		self.assertEqual(sorted((r.item_code, r.qty) for r in latest.returnable), sorted([(self.plain_item, 1), (self.batch_item, 1)]))
+		self.assertEqual(invoices[first.sales_invoice].returnable, [])
+
 	# prints (v0.6.1): Mobile Visit Bill, Mobile Invoice 4in, Mobile Return Note
 
 	def printed(self, doctype, name, print_format, user=None):

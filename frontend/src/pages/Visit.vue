@@ -162,7 +162,7 @@
 				<select v-model="newReturn.against_invoice" class="field" @change="loadReturnLines">
 					<option value="" disabled>{{ __("Choose invoice…") }}</option>
 					<option :value="NO_INVOICE">{{ __("No invoice (item without batches)") }}</option>
-					<option v-for="inv in customerInvoices" :key="inv.name" :value="inv.name">{{ inv.name }} · {{ inv.posting_date }}</option>
+					<option v-for="inv in customerInvoices" :key="inv.name" :value="inv.name">{{ invoiceLabel(inv) }}</option>
 				</select>
 				<select v-if="newReturn.against_invoice && newReturn.against_invoice !== NO_INVOICE" v-model="newReturn.sales_invoice_item" class="field">
 					<option value="">{{ __("Item…") }}</option>
@@ -212,8 +212,9 @@
 			</div>
 			<div v-if="form.outcome === 'Sale'">
 				<label class="label">{{ __("Collect now for this invoice") }} ({{ __("due") }} {{ money(dueOnSale) }})</label>
-				<input v-model.number="form.collect_amount" class="field" type="number" inputmode="decimal" min="0" :readonly="!allowCredit" />
-				<p v-if="!allowCredit" class="mt-1 text-xs text-gray-500">{{ __("Cash sales only: the full total is collected.") }}</p>
+				<input v-model.number="form.collect_amount" class="field" type="number" inputmode="decimal" min="0" :readonly="!allowCredit || creditCovers" />
+				<p v-if="creditCovers" class="mt-1 rounded-lg bg-green-50 p-2 text-sm text-green-800">{{ __("Return credit covers this invoice — nothing to collect.") }}</p>
+				<p v-else-if="!allowCredit" class="mt-1 text-xs text-gray-500">{{ __("Cash sales only: the full total is collected.") }}</p>
 			</div>
 			<div>
 				<div class="label">{{ __("Previous outstanding invoices") }}</div>
@@ -329,7 +330,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from "vue"
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue"
 import { call, m } from "../api"
 import { loadContext } from "../context"
 import VisitPrints from "../components/VisitPrints.vue"
@@ -459,6 +460,20 @@ const discountPayload = computed(() => {
 	return invoiceDiscount.mode === "amt" ? { discount_amount: value } : { additional_discount_percentage: value }
 })
 const dueOnSale = computed(() => Number(priced.value?.due_on_sale ?? priced.value?.rounded_total ?? 0))
+const creditCovers = computed(() => form.outcome === "Sale" && Number(priced.value?.credit_on_sale || 0) > 0 && dueOnSale.value <= 0)
+// Collect Now follows the amount still due when the return credit covers the sale, or when the due drops
+// below what was entered: never a refused submit for an amount the agent was not asked to collect.
+watch(dueOnSale, (due) => {
+	if (form.outcome === "Sale" && (creditCovers.value || Number(form.collect_amount || 0) > due)) form.collect_amount = due
+})
+const amount = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })
+// Look-alike numbers (MB-SINV-26-00001 / ACC-SINV-2026-00001): date, returnable qty, total and what is owed.
+function invoiceLabel(inv) {
+	const lines = inv.returnable || []
+	const what = !lines.length ? __("all returned") : lines.length === 1 ? `${qty(lines[0].qty)} ${lines[0].uom}` : __("{0} items", [lines.length])
+	const owes = Number(inv.outstanding_amount) > 0 ? __("owes {0}", [amount(inv.outstanding_amount)]) : __("paid")
+	return [inv.name, (inv.posting_date || "").slice(8, 10) + "-" + (inv.posting_date || "").slice(5, 7), what, amount(inv.rounded_total || inv.grand_total), owes].join(" · ")
+}
 const returnRemarkRequired = computed(() => !!returnReasons.value.find((r) => r.name === newReturn.return_reason)?.requires_remark)
 // A return filled in but not added must never be dropped silently (live run MTRIP-26-00005).
 // Only an item or a quantity makes it pending: a picked invoice alone loses nothing.

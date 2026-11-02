@@ -26,6 +26,11 @@
 - Returns step: the invoice picker starts on "Choose invoice…" ("No invoice" is an explicit choice); the
   not-added hint appears only once an item or quantity is entered; while "+ Add return" is disabled the
   form says what is missing (invoice, item, qty, qty above returnable, reason, remarks for reason X).
+- Return invoice picker: newest first, each invoice as "number · date · qty still returnable · total · owes x /
+  paid" (MB-SINV-26-00001 and ACC-SINV-2026-00001 were easy to confuse).
+- Collection: when the return credit covers the sale, Collect Now is set to the amount due (0), read-only,
+  with "Return credit covers this invoice — nothing to collect."; Collect Now also drops to the due amount
+  whenever the due falls below what was entered (no refused submit).
 - Return lines show reason and condition as labelled badges (Damaged in red) with the remarks, on the
   Returns step and on Review.
 - Submit visit asks for confirmation with a summary: sale lines (qty, rate, line discount), invoice

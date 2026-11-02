@@ -319,15 +319,24 @@ def get_returnable_lines(invoice: str, customer: str) -> list[dict]:
 
 @frappe.whitelist()
 def get_customer_invoices(customer: str) -> list[dict]:
-	"""The customer's recent submitted, non-return invoices (return picker on the phone)."""
+	"""The customer's recent submitted, non-return invoices for the return picker, newest first, with what
+	tells look-alike numbers apart: date, qty still returnable per item, total and what is still owed."""
 	require_roles()
-	return frappe.get_all(
+	invoices = frappe.get_all(
 		"Sales Invoice",
 		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0},
-		fields=["name", "posting_date", "grand_total"],
-		order_by="posting_date desc, name desc",
+		fields=["name", "posting_date", "grand_total", "rounded_total", "outstanding_amount"],
+		order_by="posting_date desc, posting_time desc, creation desc",
 		limit_page_length=SEARCH_LIMIT,
 	)
+	for invoice in invoices:
+		qty_by_item = {}
+		for line in returns.returnable_lines(invoice.name):
+			key = (line.item_code, line.uom)
+			qty_by_item.setdefault(key, frappe._dict(item_code=line.item_code, item_name=line.item_name, uom=line.uom, qty=0))
+			qty_by_item[key].qty += flt(line.returnable_qty)
+		invoice.returnable = list(qty_by_item.values())
+	return invoices
 
 
 @frappe.whitelist()
