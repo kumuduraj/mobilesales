@@ -1,3 +1,13 @@
+## v0.6.1 — fixes from the v0.6.0 live run (unreleased)
+
+- Fix: the Returns step dropped a return that was filled in but not added with "+ Add return" (live run
+  MTRIP-26-00005: the visit was submitted without it). Next is now blocked while a return is pending, with a
+  hint and a Clear button; the Review step lists every return line; the done screen shows the return credit.
+- Mobile Invoice 4in: list price and discount per discounted line, Subtotal and Invoice discount lines, and
+  Grand Total / Rounding adjustment when the total is rounded.
+- Tests: the live-run steps through the phone API as the real agent (6% refused, return above the invoiced
+  qty refused, 1 sold + 1 returned = no cash); SPA test that a pending return blocks Next and is submitted.
+
 ## v0.6.0 — Phase 5b: Vehicles, discounts, customer returns
 
 - Mobile Vehicle (vehicle no., description, van warehouse, default driver, active): "Create Van Warehouse"

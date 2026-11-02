@@ -108,6 +108,19 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		percent = self.visit(items=[{"item_code": self.plain_item, "qty": 1}], additional_discount_percentage=10)
 		self.assertEqual(percent.grand_total, 90)
 
+		# the 4-inch invoice shows list price, line discount and the invoice discount
+		with as_user(self.agent_a.user):
+			html = frappe.get_print("Sales Invoice", visit.sales_invoice, print_format="Mobile Invoice 4in")
+		for text in ("List", "Disc. 5.00%", "Disc. 10.00%", "Subtotal", "Invoice discount", "-LKR 10.00" if "LKR" in html else "10.00"):
+			self.assertIn(text, html)
+
+		# a total with cents is rounded: the invoice shows the rounding adjustment
+		odd = self.visit(items=[{"item_code": self.plain_item, "qty": 1, "discount_amount": 0.5}])
+		si = frappe.get_doc("Sales Invoice", odd.sales_invoice)
+		with as_user(self.agent_a.user):
+			html = frappe.get_print("Sales Invoice", si.name, print_format="Mobile Invoice 4in")
+		self.assertEqual("Rounding adjustment" in html, bool(si.rounding_adjustment) and si.rounded_total != si.grand_total)
+
 	def test_pricing_rule_discount_not_capped_and_manual_on_top(self):
 		frappe.get_doc(
 			{
@@ -374,6 +387,32 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		self.assertTrue(result["credit_notes"].startswith("MB-SRET-"))
 		self.assertEqual(history[result["name"]].credit_notes, result["credit_notes"])
 		self.assertEqual(self.outstanding(result["sales_invoice"]), 0)
+
+	def test_live_run_steps_sale_and_full_return_set_off(self):
+		"""MTRIP-26-00005 steps as the real agent through the phone API: 6% refused, a return above the
+		invoiced qty refused, then 1 sold + 1 returned against an earlier paid invoice = no cash at all."""
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, {"max_discount_pct": 5, "max_return_value_per_visit": 2000})
+		earlier = self.visit(items=[{"item_code": self.batch_item, "qty": 1}])  # like MB-SINV-26-00002: paid
+		self.assertEqual(self.outstanding(earlier.sales_invoice), 0)
+		sale = [{"item_code": self.batch_item, "qty": 1}]
+		ret = [self.ret(self.batch_item, 1, earlier.sales_invoice, condition="Damaged")]
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "above your limit of 5"):
+				api.price_cart(self.trip.name, self.customer, [{"item_code": self.batch_item, "qty": 2, "discount_percentage": 6}])
+			with self.assertRaisesRegex(frappe.ValidationError, "only 1.0 .* can still be returned"):
+				api.price_cart(self.trip.name, self.customer, sale, returns_items=[{**ret[0], "qty": 2}])
+			priced = api.price_cart(self.trip.name, self.customer, sale, returns_items=ret)
+			self.assertEqual((priced["rounded_total"], priced["return_total"], priced["due_on_sale"]), (200, 200, 0))
+			result = api.submit_visit({"client_ref": "live-2", "mobile_trip": self.trip.name, "customer": self.customer,
+				"outcome": "Sale", "sale_items": sale, "return_items": ret, "collect_amount": 0})  # fmt: skip
+		visit = frappe.get_doc("Customer Visit", result["name"])
+		note = self.credit_note(visit)
+		self.assertEqual(len(visit.return_items), 1)
+		self.assertEqual((visit.payment_entry, visit.total_collected, visit.credit_applied), (None, 0, 200))
+		self.assertEqual((self.outstanding(visit.sales_invoice), self.outstanding(note.name)), (0, 0))
+		self.assertEqual((note.owner, note.return_against), (self.agent_a.user, earlier.sales_invoice))
+		self.assertEqual(frappe.db.get_value("Journal Entry", visit.credit_journal, "owner"), self.agent_a.user)
+		self.assertEqual({b.get("batch_no"): b.get("qty") for b in get_batch_qty(warehouse=self.customer_returns, item_code=self.batch_item)}, {self.batch_a: 1})
 
 	def standard_invoice(self, rate):
 		si = frappe.get_doc(

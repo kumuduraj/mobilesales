@@ -183,7 +183,13 @@
 					<option v-for="r in returnReasons" :key="r.name" :value="r.name">{{ r.name }}</option>
 				</select>
 				<input v-model.trim="newReturn.remarks" class="field" :placeholder="returnRemarkRequired ? __('Remarks *') : __('Remarks (optional)')" />
-				<button class="btn-secondary w-full" :disabled="!canAddReturn" @click="addReturn">+ {{ __("Add return") }}</button>
+				<div class="grid grid-cols-3 gap-2">
+					<button class="btn-secondary col-span-2" :disabled="!canAddReturn" @click="addReturn">+ {{ __("Add return") }}</button>
+					<button class="btn-secondary" :disabled="!pendingReturn" @click="clearReturn">{{ __("Clear") }}</button>
+				</div>
+				<p v-if="pendingReturn" class="text-sm font-medium text-amber-700">
+					{{ __("This return is not added yet: tap + Add return (or Clear) before Next.") }}
+				</p>
 			</div>
 			<div v-if="priced && returnRows.length" class="border-t border-gray-200 pt-2 text-sm">
 				<div class="flex justify-between font-semibold"><span>{{ __("Return credit") }}</span><span>{{ money(priced.return_total) }}</span></div>
@@ -229,6 +235,9 @@
 			<div class="flex justify-between"><span class="text-gray-500">{{ __("Outcome") }}</span><span class="font-semibold">{{ __(form.outcome) }}</span></div>
 			<div v-if="form.outcome === 'No Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Reason") }}</span><span>{{ form.no_sale_reason }}</span></div>
 			<div v-if="form.outcome === 'Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Invoice total") }}</span><span>{{ money(priced?.rounded_total) }}</span></div>
+			<div v-for="r in returnRows" :key="r.item_code + r.against_invoice + r.qty" class="flex justify-between text-gray-600">
+				<span>{{ __("Return") }}: {{ r.item_name || r.item_code }} × {{ qty(r.qty) }} {{ r.uom }}</span><span>{{ r.against_invoice || __("No invoice") }}</span>
+			</div>
 			<div v-if="returnRows.length" class="flex justify-between"><span class="text-gray-500">{{ __("Return credit") }}</span><span>{{ money(priced?.return_total) }}</span></div>
 			<div v-if="priced?.credit_applied" class="flex justify-between"><span class="text-gray-500">{{ __("Credit applied") }}</span><span>{{ money(priced.credit_applied) }}</span></div>
 			<div class="flex justify-between"><span class="text-gray-500">{{ __("Collected") }}</span><span>{{ money(totalCollected) }}</span></div>
@@ -242,6 +251,9 @@
 			<div class="text-3xl">✅</div>
 			<div class="text-lg font-semibold">{{ __("Visit saved") }} — {{ done.name }}</div>
 			<div class="text-sm text-gray-600">{{ __(done.outcome) }} · {{ __("collected") }} {{ money(done.total_collected) }}</div>
+			<div v-if="done.return_total" class="text-sm text-gray-600">
+				{{ __("Return credit") }} {{ money(done.return_total) }} · {{ __("applied") }} {{ money(done.credit_applied) }}
+			</div>
 			<a v-if="done.sales_invoice" class="btn-primary w-full" :href="printUrl('Sales Invoice', done.sales_invoice, 'Mobile Invoice 4in')" target="_blank">
 				{{ __("Print invoice") }} {{ done.sales_invoice }}
 			</a>
@@ -402,6 +414,8 @@ const discountPayload = computed(() => {
 const dueOnSale = computed(() => Number(priced.value?.due_on_sale ?? priced.value?.rounded_total ?? 0))
 const creditNotes = computed(() => (done.value?.credit_notes || "").split(",").map((n) => n.trim()).filter(Boolean))
 const returnRemarkRequired = computed(() => !!returnReasons.value.find((r) => r.name === newReturn.return_reason)?.requires_remark)
+// A return filled in but not added must never be dropped silently (live run MTRIP-26-00005).
+const pendingReturn = computed(() => !!(newReturn.against_invoice || newReturn.item_code || Number(newReturn.qty) > 0 || newReturn.return_reason))
 const canAddReturn = computed(
 	() =>
 		Number(newReturn.qty) > 0 &&
@@ -422,7 +436,8 @@ const canNext = computed(() => {
 		if (form.outcome === "Sale") return !!priced.value && cartItems.value.length > 0 && !priceError.value && priced.value.lines.every((l) => l.enough_stock)
 		return true
 	}
-	if (step.value === "returns") return !priceError.value && (form.outcome !== "Return Only" || returnRows.value.length > 0)
+	if (step.value === "returns")
+		return !priceError.value && !pendingReturn.value && (form.outcome !== "Return Only" || returnRows.value.length > 0)
 	if (step.value === "collection" && form.outcome === "Collection Only")
 		return previousRows.value.some((r) => r.allocated > 0) || Number(priced.value?.credit_applied || 0) > 0
 	return true
@@ -473,8 +488,15 @@ function addReturn() {
 		uom: line ? line.uom : item?.stock_uom,
 		qty: Number(newReturn.qty),
 	})
-	Object.assign(newReturn, { sales_invoice_item: "", item_code: "", qty: null, condition: "Resaleable", return_reason: "", remarks: "" })
+	clearReturn()
 	price()
+}
+
+function clearReturn() {
+	Object.assign(newReturn, { against_invoice: "", sales_invoice_item: "", item_code: "", qty: null, condition: "Resaleable", return_reason: "", remarks: "" })
+	returnLines.value = []
+	itemQuery.value = ""
+	itemResults.value = []
 }
 
 function removeReturn(index) {

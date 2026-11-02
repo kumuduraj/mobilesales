@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMemoryHistory } from "vue-router"
 import { createMobileApp, routes } from "../src/app"
+import { session } from "../src/state"
 
 const AGENT = {
 	name: "MSA-0001",
@@ -195,6 +196,11 @@ API.save_settlement = {
 	warnings: ["10 Kg Kochchi Chicken Meat will be recorded as MISSING", "Cash is SHORT by LKR 25.00"],
 }
 API.submit_settlement_for_verification = { ...API.save_settlement, workflow_state: "Pending Store", editable: false }
+API.submit_visit = {
+	name: "CV-26-000008", docstatus: 1, outcome: "Sale", customer: "Pilot Customer 1", customer_name: "Pilot Customer 1",
+	sales_invoice: "MB-SINV-26-00004", payment_entry: null, grand_total: 1325, rounded_total: 1325, total_collected: 0,
+	return_total: 1325, credit_applied: 1325, credit_notes: "MB-SRET-26-00001", credit_journal: "ACC-JV-2026-00010", duplicate: false,
+}
 
 const SCENARIOS = [
 	{ title: "agent with a Loaded trip", boot: boot(AGENT, trip("Loaded")), expect: "MTRIP-26-00003" },
@@ -221,6 +227,7 @@ afterEach(() => vi.restoreAllMocks())
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
 
 async function render(bootData, path, interact) {
+	Object.assign(session, { ctx: null, loading: false, error: null }) // module state: no context from an earlier render
 	window.ms_boot = bootData
 	window.csrf_token = bootData.csrf_token
 	document.body.innerHTML = '<div id="app"></div>'
@@ -442,5 +449,82 @@ describe("settlement screen", () => {
 		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
 		expect(seen.afterContinue.submits).toBe(1)
 		expect(seen.afterContinue.text).toContain("Submitted for verification")
+	})
+})
+
+describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
+	const settleMore = async () => {
+		for (let i = 0; i < 4; i++) await settle()
+	}
+	const button = (root, label) => {
+		const found = [...root.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(label))
+		if (!found) throw new Error(`no button "${label}" in: ${root.textContent.replace(/\s+/g, " ").slice(0, 400)}`)
+		return found
+	}
+	const choose = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("change"))
+	}
+
+	it("blocks Next while a return is filled in but not added, then submits it", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				for (let i = 0; i < 3; i++) {
+					button(root, "Next").click()
+					await settle()
+				}
+				button(root, "Sale").click()
+				await settle()
+				button(root, "+").click() // 1 Kg in the cart
+				await new Promise((resolve) => setTimeout(resolve, 400)) // price_cart is debounced (350 ms)
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				const form = root.querySelector(".rounded-lg.border")
+				if (!form) throw new Error(`no return form in: ${root.textContent.replace(/\s+/g, " ").slice(0, 600)}`)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged") // condition
+				choose(form.querySelectorAll("select")[3], "Damaged") // reason
+				await settle()
+				seen.nextDisabled = button(root, "Next").disabled
+				seen.hint = root.textContent.includes("This return is not added yet")
+				button(root, "Next").click() // must not move on
+				await settle()
+				seen.stillOnReturns = root.textContent.includes("Returns from the customer")
+				button(root, "+ Add return").click()
+				await settleMore()
+				seen.nextAfterAdd = button(root, "Next").disabled
+				button(root, "Next").click()
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				seen.review = root.textContent.replace(/\s+/g, " ")
+				button(root, "Submit visit").click()
+				await settleMore()
+				seen.done = root.textContent.replace(/\s+/g, " ")
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		const submit = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith("submit_visit"))
+		const payload = JSON.parse(submit[1].body.get("payload"))
+		expect(problems).toEqual([])
+		expect(seen).toMatchObject({ nextDisabled: true, hint: true, stillOnReturns: true, nextAfterAdd: false })
+		expect(seen.review).toContain("Return: Kochchi Chicken Meat × 1 Kg")
+		expect(payload.return_items).toEqual([
+			{ item_code: "ARCP003", qty: 1, uom: "Kg", against_invoice: "MB-SINV-26-00002", sales_invoice_item: "row-1",
+				return_reason: "Damaged", condition: "Damaged", remarks: null },
+		])
+		expect(payload.sale_items).toEqual([{ item_code: "ARCP003", qty: 1, discount_percentage: 0, discount_amount: 0 }])
+		expect(seen.done).toContain("Print credit note MB-SRET-26-00001")
+		expect(seen.done).toContain("Return credit")
 	})
 })
