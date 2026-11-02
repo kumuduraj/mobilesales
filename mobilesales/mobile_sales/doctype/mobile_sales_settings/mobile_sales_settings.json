@@ -24,6 +24,8 @@
   "employee_recovery_account",
   "agents_section",
   "sales_person_parent",
+  "default_customer_group",
+  "default_territory",
   "rules_section",
   "recover_shortage_from_agent",
   "shortage_tolerance_value",
@@ -154,6 +156,19 @@
    "description": "Group Sales Person that agent Sales Persons are created under"
   },
   {
+   "fieldname": "default_customer_group",
+   "fieldtype": "Link",
+   "label": "Default Customer Group",
+   "options": "Customer Group",
+   "description": "For customers created from the mobile app"
+  },
+  {
+   "fieldname": "default_territory",
+   "fieldtype": "Link",
+   "label": "Default Territory",
+   "options": "Territory"
+  },
+  {
    "fieldname": "rules_section",
    "fieldtype": "Section Break",
    "label": "Rules"
@@ -197,7 +212,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 14:00:00.000000",
+ "modified": "2026-11-01 16:30:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",

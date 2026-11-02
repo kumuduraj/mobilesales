@@ -8,6 +8,7 @@
   "route_name",
   "column_break_route",
   "territory",
+  "is_active",
   "customers_section",
   "customers"
  ],
@@ -33,6 +34,14 @@
    "in_standard_filter": 1
   },
   {
+   "default": "1",
+   "fieldname": "is_active",
+   "fieldtype": "Check",
+   "label": "Is Active",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
    "fieldname": "customers_section",
    "fieldtype": "Section Break",
    "label": "Customers"
@@ -46,7 +55,7 @@
  ],
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-11-01 12:30:00.000000",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Route",

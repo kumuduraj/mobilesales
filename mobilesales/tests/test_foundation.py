@@ -205,6 +205,13 @@ class TestFoundation(IntegrationTestCase):
 			}
 			raise AssertionError(f"Test records left behind (before, after): {diff}")
 
+	def setUp(self):
+		super().setUp()
+		# Nothing inside a test may commit: a commit would write test data to the live site.
+		guard = patch.object(frappe.db, "commit", side_effect=AssertionError("frappe.db.commit() inside a test"))
+		guard.start()
+		self.addCleanup(guard.stop)
+
 	# helpers
 
 	def _sales_invoice(self, warehouse):
@@ -403,3 +410,10 @@ class TestFoundation(IntegrationTestCase):
 		self.assertFalse(permissions.agent_has_permission(frappe._dict(user="someone@example.com"), "read", TEST_USER))
 		self.assertIn(frappe.db.escape(TEST_USER), permissions.agent_query_conditions(TEST_USER))
 		self.assertEqual(permissions.agent_query_conditions("Administrator"), "")
+
+	def test_settings_customer_defaults_must_be_leaves(self):
+		group = frappe.db.get_value("Customer Group", {"is_group": 1})
+		settings = frappe.get_doc(self.settings.as_dict())
+		settings.default_customer_group = group
+		with self.assertRaisesRegex(frappe.ValidationError, "must not be a group"):
+			settings.validate()

@@ -1,3 +1,41 @@
+## v0.5.0 — Phase 5: Mobile phone app
+
+- Phone app at /mobile-sales (Vue 3 + frappe-ui, installable PWA) for Mobile Sales Agents: Today (trip,
+  van stock, Start Trip / End Day), Route (planned customers in sequence, search, quick-entry new
+  customer), Visit wizard (check-in GPS + photo, customer changes, shelf stock, outcome, cart from van
+  stock with server pricing, collection of current and previous invoices, submit, print), History
+  (today's visits, reprint) and Settlement (returned / damaged counts, cash denominations, submit for
+  verification).
+- Whitelisted API (spec §6.2): every method requires a Mobile Sales role, resolves the agent from the
+  session and re-checks trip / visit ownership; totals are recomputed on the server. `submit_visit` is
+  idempotent on `client_ref` (a repeated submit returns the same visit). `save_settlement` +
+  `submit_settlement_for_verification` replace the planned single `submit_settlement`.
+- Online only: the service worker caches the app shell only; an offline banner shows and every submit is
+  blocked while offline; submit buttons are protected against double taps. Item master / route caching
+  and the offline queue move to the later offline phase.
+- The host page refuses users without a Mobile Sales role; guests are sent to the login page.
+- Printing through the browser print view; the Android ESC/POS hand-off is deferred until after v1.0.0
+  (`get_receipt_escpos` already returns the receipt lines).
+- The app is called "Mobile Sales" everywhere (header, installed-app name and short name); service worker
+  cache v3 so installed phones drop the old shell.
+- Shop Closed needs no reason (the field is hidden and cleared); remarks are optional. No Sale still needs a
+  reason.
+- New customer from the phone: customer group and territory pickers (defaults from Settings) and an optional
+  route; the customer is appended to the end of that route. Mobile Route gets Is Active (default on); only
+  active routes are offered. No Customer / Route permission changes.
+- Off-route visits: agents can search, visit and invoice any customer. Customer Visit.off_route (read only)
+  marks visits to customers not on the trip's route; History shows an "Off route" tag. Patch fills it for
+  existing visits.
+- Mobile Trip load items and the Top-up dialog fill UOM = stock UOM (conversion factor 1) when an item is
+  chosen; the server defaults them when empty.
+- Reopen Trip (Settling → In Field) for the trip's agent or a supervisor, from the Desk trip form and the
+  Today screen: allowed with no settlement or a workflow Draft settlement (deleted); refused from Pending
+  Store on (a supervisor rejects it to Draft first).
+- Tests: never commit (frappe.db.commit raises inside every test, after a host-page test committed test
+  data to the live site); nested `as_user` blocks now return to the previous user, so no API flow runs
+  as Administrator. All test runs moved to the dedicated test site mstest.local. 91 tests; SPA mount test
+  (vitest) covers every route plus the Reopen, Off route and new-customer screens.
+
 ## v0.4.1 — fixes from the live pilot
 
 - Fix: collection of previous invoices by agents. ERPNext re-reads each referenced invoice as the

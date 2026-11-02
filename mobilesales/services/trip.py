@@ -1,6 +1,7 @@
 """Mobile Trip lifecycle (spec §4.1, §5.5): validation, submit/cancel postings and status actions.
 
 Draft -> (submit) Loaded -> (start_trip) In Field -> (end_day) Settling -> (settlement) Settled.
+Settling -> (reopen_trip, no settlement past workflow Draft) In Field.
 Cancel only from Loaded with no submitted visits."""
 
 import frappe
@@ -193,6 +194,39 @@ def end_day(trip: str) -> str:
 			title=_("Draft visits open"),
 		)
 	doc.db_set("status", "Settling")
+	return doc.status
+
+
+@frappe.whitelist()
+def reopen_trip(trip: str) -> str:
+	"""Settling -> In Field (End Day pressed too early). Only while the settlement is not started or still a
+	workflow Draft; that draft is deleted. From Pending Store on, a supervisor must Reject it to Draft first."""
+	doc = _lock(trip)
+	_require_agent_or_roles(doc, SUPERVISOR_ROLES)
+	_require_status(doc, ("Settling",))
+	drafts = []
+	for row in frappe.get_all(
+		"Mobile Settlement",
+		filters={"mobile_trip": doc.name, "docstatus": ["<", 2]},
+		fields=["name", "docstatus", "workflow_state"],
+	):
+		state = row.workflow_state or "Draft"
+		if row.docstatus != 0 or state != "Draft":
+			frappe.throw(
+				_("Settlement {0} is {1}; a supervisor must reject it to Draft before the trip can be reopened.").format(
+					frappe.bold(row.name), _(state)
+				),
+				title=_("Settlement in progress"),
+			)
+		drafts.append(row.name)
+	for name in drafts:
+		frappe.delete_doc("Mobile Settlement", name, ignore_permissions=True)
+	doc.db_set("status", "In Field")
+	doc.add_comment(
+		"Info",
+		_("Trip reopened by {0}").format(frappe.session.user)
+		+ (_("; draft settlement {0} deleted").format(", ".join(drafts)) if drafts else ""),
+	)
 	return doc.status
 
 

@@ -337,3 +337,7 @@ doc_events = {
 # List of apps whose translatable strings should be excluded from this app's translations.
 # ignore_translatable_strings_from = []
 
+# Mobile phone app (SPA host page www/mobile-sales.py)
+website_route_rules = [
+	{"from_route": "/mobile-sales/<path:app_path>", "to_route": "mobile-sales"},
+]
