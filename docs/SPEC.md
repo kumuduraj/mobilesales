@@ -425,6 +425,16 @@ Every Reject returns the settlement to Draft and clears Verified by Store / Veri
 
 All Script Reports read Customer Visit, Mobile Settlement and the standard ledgers; filters company, date range, agent, route, territory unless noted.
 
+Implementation (v0.7.0): every figure comes from `mobilesales/services/reports.py` — the Script Reports, the Day Report (report and A4
+print), the 20:00 email, the workspace charts and the phone's "My day" share it, so they cannot disagree. Filters also include vehicle.
+Reports use ref_doctype Mobile Trip; roles Mobile Sales Supervisor / Store Keeper / Cashier, System Manager, Accounts Manager
+(Accounts Manager has read / report on Mobile Trip, Customer Visit, Mobile Settlement). Agents may open Customer Visit Register,
+Customer Stock Position, Outstanding by Agent and the Mobile Trip Day Report, always limited to their own trips (enforced in the
+shared logic, whatever filters are sent). Planned visits: a route customer is due on a trip date when Daily, or on its visit day
+(Weekly / Fortnightly; any day when no visit day is set — the fortnight's week is not recorded). "Credit given" / settlement
+credit sales = what a sale left open after the cash and the return credit of the same visit (a later return paying it does not
+change it).
+
 | Report | Grain | Key columns |
 | --- | --- | --- |
 | **Salesperson Performance** | Agent × period | trips, working days, visits, planned visits, route coverage %, sales visits, strike rate % (sales ÷ visits), invoices, net sales, avg invoice value, lines per invoice, collections, collection % of sales, credit sales, returns % of issued, damage %, stock shortage value, cash variance, sales per day |
@@ -436,9 +446,10 @@ All Script Reports read Customer Visit, Mobile Settlement and the standard ledge
 | Mobile Stock Variance | Agent × item | issued, sold, returned, damaged, missing qty and value over period |
 | Mobile Cash Variance | Agent × trip | expected, handed, variance, action (write-off/recovered) |
 | Outstanding by Agent | Agent × customer | credit invoices raised by agent still outstanding, ageing buckets |
+| **Customer Returns Register** (v0.7.0) | Return line | date, agent, trip, visit, customer, item, qty, rate, credit amount, reason, condition, remarks, against invoice, credit note, credit applied to (per invoice), credit left; settlement received / damaged / missing on the trip × item's first row; plus every other movement of the customer return warehouse ("Moved out / in": settlement Return Damage / Shortage, manual Stock Entries) so the quantity column adds up to the Stock Ledger |
+| **Discount Report** (v0.7.0) | Invoice | price-list value, pricing-rule effect (apart), line discounts, invoice discount (amount and %), manual discounts, manual % of the price-list value, agent cap %, within cap |
 
-**Workspace "Mobile Sales"**: shortcuts (Trip, Visit, Settlement, Agent, Route), Number Cards (Open Trips, Today's Visits, Today's Mobile Sales, Today's Collections, Pending Settlements, Today's Cash Variance), Dashboard Charts (Mobile sales by agent — bar, last 30 days; Strike rate trend — line; No-sale reasons — donut).
-Phase 6: add a link to **Mobile Visit Rejection** (v0.6.1: every visit the server refused, with user, agent, trip, customer and the message the agent saw; supervisor read-only) in the workspace.
+**Workspace "Mobile Sales"** (v0.7.0; with its Workspace Sidebar and Desktop Icon, roles Supervisor / Store Keeper / Cashier / Accounts Manager / System Manager): shortcuts (Trip, Visit, Settlement, Agent, Vehicle, Route, Mobile Visit Rejection — every visit the server refused, v0.6.1), Number Cards (Open Trips, Today's Visits, Today's Mobile Sales, Today's Collections, Today's Returns, Pending Settlements, Today's Cash Variance), Dashboard Charts from custom sources, last 30 days (Mobile sales by agent — bar; Strike rate trend — line; No-sale reasons — donut; Returns by reason — pie), links to every report.
 
 Standard reports keep working: filter Sales Register / Accounts Receivable by `is_mobile_sale` or `mobile_trip` to split mobile from standard sales.
 
@@ -462,6 +473,13 @@ One report per trip covering every visit, customer update, sale, collection and 
 | 12 | Sign-off | agent, store keeper, cashier, supervisor with date/time from workflow | Workflow log |
 
 Exports: Excel from the Script Report; PDF from the print format. A scheduled email (daily 20:00) sends the day's reports for all settled trips to Mobile Sales Supervisors.
+
+Implementation (v0.7.0): the report adds a customer returns section (9b) and vehicle / helper in the header; section 10 splits issued and
+top-up; section 12 reads the workflow log (the "Workflow" comments of each transition). When the settlement is submitted (Approved),
+the PDF is rendered in the background after the commit and attached as a private file "<trip> Day Report.pdf" (once). The 20:00 job
+(scheduler cron) sends one email with the PDFs of the settlements submitted that day to every enabled Mobile Sales Supervisor; it is
+switched by Mobile Sales Settings → Daily Report Email (default off; on for agrosys) and skipped when nothing was settled. The phone's
+Today screen shows "My day" (visits / planned, sales, cash collected, returns, credit given) from the same figures.
 
 ## 8. App structure, build phases, acceptance tests
 

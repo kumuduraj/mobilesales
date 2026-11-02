@@ -59,6 +59,8 @@ const boot = (agent, openTrip) => ({
 
 // Shapes as returned by mobilesales.api.mobile (spec §6.2).
 const API = {
+	get_my_day: { visits: 3, planned_visits: 5, sales_visits: 3, invoices: 3, sales_total: 6360, cash_collected: 4536, credit_given: 0,
+		return_value: 2650, credit_applied: 2650 },
 	get_van_stock: [
 		{
 			item_code: "ARCP003",
@@ -294,6 +296,41 @@ describe("screens", () => {
 		expect(problems).toEqual([])
 		expect(text).toContain("VAN-01")
 		expect(text).toContain("Helper: Kamal")
+	})
+
+	it("Today shows My day from get_my_day (the Day Report figures)", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			const card = root.querySelector("[data-my-day]")
+			seen.text = card?.textContent.replace(/\s+/g, " ")
+		})
+		expect(problems).toEqual([])
+		const calls = globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("get_my_day"))
+		expect(calls.length).toBe(1)
+		expect(seen.text).toContain("My day")
+		expect(seen.text).toContain("3 / 5")
+		expect(seen.text).toContain("6,360.00")
+		expect(seen.text).toContain("3 invoices")
+		expect(seen.text).toContain("4,536.00")
+		expect(seen.text).toContain("Returns (credit)")
+		expect(seen.text).toContain("2,650.00")
+		expect(seen.text).not.toContain("Credit given")
+	})
+
+	it("Today keeps the trip's own figures until get_my_day answers", async () => {
+		const original = API.get_my_day
+		delete API.get_my_day
+		const seen = {}
+		try {
+			await render(boot(AGENT, { ...trip("In Field"), visits: 2, invoices: 1, invoiced_amount: 1325, collected_amount: 825 }), "/", async (root) => {
+				seen.text = root.querySelector("[data-my-day]")?.textContent.replace(/\s+/g, " ")
+			})
+		} finally {
+			API.get_my_day = original
+		}
+		expect(problems.filter((p) => !p.includes("unexpected API call") || !p.includes("get_my_day"))).toEqual([])
+		expect(seen.text).toContain("1,325.00")
+		expect(seen.text).toContain("825.00")
 	})
 
 	it("Today offers Reopen Trip while Settling", async () => {

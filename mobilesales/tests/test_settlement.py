@@ -19,7 +19,9 @@ CASHIER = ROLE_USERS["cashier"][0]
 SUPERVISOR = ROLE_USERS["supervisor"][0]
 
 
-class TestMobileSettlement(MobileSalesTestCase):
+class SettlementTestBase(MobileSalesTestCase):
+	"""Settlement test data and flow helpers (also used by test_reports)."""
+
 	@classmethod
 	def setUpClass(cls):
 		super().setUpClass()  # creates the store keeper / cashier / supervisor / office users
@@ -142,6 +144,9 @@ class TestMobileSettlement(MobileSalesTestCase):
 	def je_lines(self, name):
 		return {(r.account, flt(r.debit), flt(r.credit), r.party or None) for r in frappe.get_doc("Journal Entry", name).accounts}
 
+
+
+class TestMobileSettlement(SettlementTestBase):
 	# 1  SPEC §8.3
 	def test_issued_sold_returned_damaged_missing(self):
 		trip = self.run_trip(

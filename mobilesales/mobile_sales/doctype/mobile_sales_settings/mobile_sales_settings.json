@@ -37,7 +37,9 @@
   "allow_credit_sales",
   "column_break_rules",
   "apply_customer_updates_directly",
-  "require_geolocation"
+  "require_geolocation",
+  "reports_section",
+  "daily_report_email"
  ],
  "fields": [
   {
@@ -243,12 +245,24 @@
    "fieldtype": "Check",
    "label": "Require Geolocation",
    "default": "0"
+  },
+  {
+   "fieldname": "reports_section",
+   "fieldtype": "Section Break",
+   "label": "Reports"
+  },
+  {
+   "fieldname": "daily_report_email",
+   "fieldtype": "Check",
+   "label": "Daily Report Email",
+   "default": "0",
+   "description": "At 20:00, email the Mobile Trip Day Reports of the trips settled that day to the Mobile Sales Supervisors."
   }
  ],
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 14:00:00.000000",
+ "modified": "2026-11-03 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",
