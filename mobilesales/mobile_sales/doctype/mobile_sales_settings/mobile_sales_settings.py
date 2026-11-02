@@ -6,8 +6,15 @@ from frappe import _
 from frappe.model.document import Document
 
 from mobilesales.overrides.guards import clear_guard_cache
+from mobilesales.services import vehicles
 
-WAREHOUSE_FIELDS = ("source_warehouse", "return_warehouse", "damage_warehouse", "van_warehouse_group")
+WAREHOUSE_FIELDS = (
+	"source_warehouse",
+	"return_warehouse",
+	"damage_warehouse",
+	"van_warehouse_group",
+	"customer_return_warehouse",
+)
 ACCOUNT_FIELDS = (
 	"agent_cash_parent_account",
 	"main_cash_account",
@@ -34,14 +41,14 @@ class MobileSalesSettings(Document):
 		self.warn_stock_settings()
 
 	def validate_naming_series(self):
-		if self.sinv_naming_series and self.sinv_naming_series not in frappe.get_meta(
-			"Sales Invoice"
-		).get_naming_series_options():
-			frappe.throw(
-				_("Naming series {0} is not an option on Sales Invoice. Run migrate or add it first.").format(
-					frappe.bold(self.sinv_naming_series)
+		options = frappe.get_meta("Sales Invoice").get_naming_series_options()
+		for series in (self.sinv_naming_series, self.sret_naming_series):
+			if series and series not in options:
+				frappe.throw(
+					_("Naming series {0} is not an option on Sales Invoice. Run migrate or add it first.").format(
+						frappe.bold(series)
+					)
 				)
-			)
 
 	def on_update(self):
 		clear_guard_cache()
@@ -74,7 +81,19 @@ class MobileSalesSettings(Document):
 		if self.van_warehouse_group:
 			self.validate_van_warehouse_group()
 
-		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse"):
+		if self.returns_enabled and not self.customer_return_warehouse:
+			frappe.throw(_("Set Customer Return Warehouse to enable returns."))
+		if self.customer_return_warehouse and self.customer_return_warehouse in (
+			self.source_warehouse,
+			self.return_warehouse,
+			self.damage_warehouse,
+		):
+			frappe.throw(
+				_("Customer Return Warehouse {0} must be its own warehouse (not the source, return or damage one).").format(
+					frappe.bold(self.customer_return_warehouse)
+				)
+			)
+		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse", "customer_return_warehouse"):
 			value = self.get(fieldname)
 			if value and frappe.db.get_value("Warehouse", value, "is_group"):
 				frappe.throw(
@@ -98,7 +117,7 @@ class MobileSalesSettings(Document):
 				)
 			)
 
-		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse"):
+		for fieldname in ("source_warehouse", "return_warehouse", "damage_warehouse", "customer_return_warehouse"):
 			value = self.get(fieldname)
 			if not value:
 				continue
@@ -110,9 +129,7 @@ class MobileSalesSettings(Document):
 					)
 				)
 
-		agent_vans = frappe.get_all(
-			"Mobile Sales Agent", filters={"van_warehouse": ["is", "set"]}, pluck="van_warehouse"
-		)
+		agent_vans = vehicles.vehicle_vans()
 		warehouse = frappe.qb.DocType("Warehouse")
 		bin = frappe.qb.DocType("Bin")
 		query = (

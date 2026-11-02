@@ -20,6 +20,8 @@ const trip = (status) => ({
 	status,
 	trip_date: "2026-11-01",
 	route: "Pilot Route 1",
+	vehicle: "VAN-01",
+	helper: "Kamal",
 	van_warehouse: AGENT.van_warehouse,
 	docstatus: 1,
 	visits: 0,
@@ -203,6 +205,13 @@ describe("SPA mounts and renders every route", () => {
 
 describe("screens", () => {
 	const clickButton = (root, label) => [...root.querySelectorAll("button")].find((b) => b.textContent.includes(label)).click()
+
+	it("Today shows the vehicle and helper", async () => {
+		const text = await render(boot(AGENT, trip("In Field")), "/")
+		expect(problems).toEqual([])
+		expect(text).toContain("VAN-01")
+		expect(text).toContain("Helper: Kamal")
+	})
 
 	it("Today offers Reopen Trip while Settling", async () => {
 		const text = await render(boot(AGENT, trip("Settling")), "/")

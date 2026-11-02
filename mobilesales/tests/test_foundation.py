@@ -13,7 +13,7 @@ from frappe.utils import cint, nowdate
 from frappe.utils.nestedset import get_root_of
 
 from mobilesales.overrides import guards, permissions
-from mobilesales.services import agent_setup
+from mobilesales.services import agent_setup, vehicles
 from mobilesales.tests.utils import ROLE_USERS, as_user, make_role_users
 
 PREFIX = "_MS Test"
@@ -26,6 +26,7 @@ COUNTED_DOCTYPES = (
 	"User Permission",
 	"User",
 	"Mobile Sales Agent",
+	"Mobile Vehicle",
 	"Item",
 	"Customer",
 	"Sales Invoice",
@@ -185,8 +186,10 @@ class TestFoundation(IntegrationTestCase):
 			.insert()
 			.name
 		)
+		cls.vehicle = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN"}).insert().name
 		with as_user(cls.users.supervisor):
 			cls.setup_result = agent_setup.setup_agent(cls.agent)
+			cls.van_warehouse = vehicles.setup_vehicle(cls.vehicle)
 
 	@classmethod
 	def tearDownClass(cls):
@@ -245,7 +248,7 @@ class TestFoundation(IntegrationTestCase):
 
 	@property
 	def van(self):
-		return self.setup_result["van_warehouse"]
+		return self.van_warehouse
 
 	# 1
 	def test_standard_sales_invoice_unaffected(self):
@@ -313,7 +316,7 @@ class TestFoundation(IntegrationTestCase):
 	# 6
 	def test_setup_agent_is_idempotent(self):
 		first = self.setup_result
-		self.assertTrue(frappe.db.exists("Warehouse", {"name": first["van_warehouse"], "parent_warehouse": self.van_group}))
+		self.assertNotIn("van_warehouse", first)  # the van belongs to the vehicle (v0.6.0)
 		self.assertEqual(frappe.db.get_value("Account", first["cash_account"], "account_type"), "Cash")
 		self.assertEqual(
 			frappe.db.get_value(
@@ -339,6 +342,20 @@ class TestFoundation(IntegrationTestCase):
 			),
 			len(agent_setup.SCOPED_DOCTYPES),
 		)
+
+	def test_setup_vehicle_creates_van_once(self):
+		self.assertTrue(frappe.db.exists("Warehouse", {"name": self.van, "parent_warehouse": self.van_group, "is_group": 0}))
+		self.assertEqual(self.van, f"{PREFIX} VAN Van - {frappe.get_cached_value('Company', self.company, 'abbr')}")
+		counts = _counts()
+		with as_user(self.users.supervisor):
+			self.assertEqual(vehicles.setup_vehicle(self.vehicle), self.van)
+		self.assertEqual(counts, _counts())
+		for user in (self.users.office, self.users.store, TEST_USER):
+			with as_user(user), self.assertRaises(frappe.PermissionError):
+				vehicles.setup_vehicle(self.vehicle)
+		other = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN 2", "van_warehouse": self.van})
+		with self.assertRaisesRegex(frappe.ValidationError, "already belongs to vehicle"):
+			other.insert()
 
 	def test_setup_agent_needs_supervisor(self):
 		for user in (self.users.office, self.users.store, TEST_USER):

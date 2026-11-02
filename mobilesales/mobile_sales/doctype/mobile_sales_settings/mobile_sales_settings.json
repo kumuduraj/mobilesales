@@ -8,6 +8,7 @@
   "selling_price_list",
   "column_break_general",
   "sinv_naming_series",
+  "sret_naming_series",
   "default_tax_template",
   "warehouses_section",
   "source_warehouse",
@@ -26,6 +27,10 @@
   "sales_person_parent",
   "default_customer_group",
   "default_territory",
+  "returns_section",
+  "returns_enabled",
+  "column_break_returns",
+  "customer_return_warehouse",
   "rules_section",
   "recover_shortage_from_agent",
   "shortage_tolerance_value",
@@ -58,6 +63,13 @@
    "label": "Mobile Sales Invoice Naming Series",
    "description": "e.g. MB-SINV-.YY.-.#####",
    "default": "MB-SINV-.YY.-.#####"
+  },
+  {
+   "fieldname": "sret_naming_series",
+   "fieldtype": "Data",
+   "label": "Mobile Credit Note Naming Series",
+   "description": "e.g. MB-SRET-.YY.-.#####",
+   "default": "MB-SRET-.YY.-.#####"
   },
   {
    "fieldname": "default_tax_template",
@@ -169,6 +181,30 @@
    "options": "Territory"
   },
   {
+   "fieldname": "returns_section",
+   "fieldtype": "Section Break",
+   "label": "Customer Returns"
+  },
+  {
+   "default": "0",
+   "fieldname": "returns_enabled",
+   "fieldtype": "Check",
+   "label": "Returns Enabled",
+   "description": "Agents may take customer returns from the van (credit notes)"
+  },
+  {
+   "fieldname": "column_break_returns",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "customer_return_warehouse",
+   "fieldtype": "Link",
+   "label": "Customer Return Warehouse",
+   "options": "Warehouse",
+   "mandatory_depends_on": "returns_enabled",
+   "description": "Leaf warehouse outside the van group, e.g. Customer Returns - XX. Receives stock only from mobile credit notes."
+  },
+  {
    "fieldname": "rules_section",
    "fieldtype": "Section Break",
    "label": "Rules"
@@ -212,7 +248,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-01 16:30:00.000000",
+ "modified": "2026-11-02 14:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",

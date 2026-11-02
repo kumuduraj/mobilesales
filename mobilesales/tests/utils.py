@@ -11,7 +11,7 @@ from frappe.utils import add_days, nowdate
 from frappe.utils.nestedset import get_root_of
 
 from mobilesales.overrides import guards
-from mobilesales.services import agent_setup
+from mobilesales.services import agent_setup, vehicles
 
 PREFIX = "_MS Test"
 COUNTED_DOCTYPES = (
@@ -22,6 +22,7 @@ COUNTED_DOCTYPES = (
 	"User Permission",
 	"User",
 	"Mobile Sales Agent",
+	"Mobile Vehicle",
 	"Mobile Trip",
 	"Item",
 	"Batch",
@@ -225,10 +226,17 @@ class MobileSalesTestCase(IntegrationTestCase):
 		for idx, user in enumerate(cls.AGENT_USERS):
 			name = f"{PREFIX} Agent {'AB'[idx]}"
 			frappe.get_doc({"doctype": "User", "email": user, "first_name": name, "send_welcome_email": 0}).insert()
-			agent = frappe.get_doc({"doctype": "Mobile Sales Agent", "user": user, "agent_name": name}).insert()
+			vehicle = frappe.get_doc({"doctype": "Mobile Vehicle", "vehicle_no": f"{PREFIX} VAN-{'AB'[idx]}"}).insert().name
+			agent = frappe.get_doc(
+				{"doctype": "Mobile Sales Agent", "user": user, "agent_name": name, "default_vehicle": vehicle}
+			).insert()
 			with as_user(cls.users.supervisor):
 				agent_setup.setup_agent(agent.name)
-			cls.agents.append(frappe.get_doc("Mobile Sales Agent", agent.name))
+				vehicles.setup_vehicle(vehicle)
+			agent = frappe.get_doc("Mobile Sales Agent", agent.name)
+			# In memory only: "this agent's van" for the tests; the van belongs to the default vehicle.
+			agent.van_warehouse = frappe.db.get_value("Mobile Vehicle", vehicle, "van_warehouse")
+			cls.agents.append(agent)
 		cls.agent_a, cls.agent_b = cls.agents
 
 	@classmethod

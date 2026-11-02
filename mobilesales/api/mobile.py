@@ -125,6 +125,8 @@ def get_context() -> dict:
 				"status",
 				"trip_date",
 				"route",
+				"vehicle",
+				"helper",
 				"van_warehouse",
 				"docstatus",
 				"visits",

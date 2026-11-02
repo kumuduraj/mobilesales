@@ -1,5 +1,6 @@
-"""Per-agent setup (spec §3.2): van warehouse, cash ledger, mode of payment, sales person,
-user permissions and role. Idempotent: every part is skipped or reused when it already exists."""
+"""Per-agent setup (spec §3.2): cash ledger, mode of payment, sales person, user permissions and role.
+The van warehouse belongs to the Mobile Vehicle (services/vehicles.py). Idempotent: every part is
+skipped or reused when it already exists."""
 
 import frappe
 from frappe import _
@@ -10,7 +11,7 @@ from mobilesales.services import settings as ms_settings
 AGENT_ROLE = "Mobile Sales Agent"
 SETUP_ROLES = ("Mobile Sales Supervisor", "System Manager")
 SCOPED_DOCTYPES = ("Mobile Trip", "Customer Visit", "Mobile Settlement")
-REQUIRED_SETTINGS = ("company", "van_warehouse_group", "agent_cash_parent_account", "sales_person_parent")
+REQUIRED_SETTINGS = ("company", "agent_cash_parent_account", "sales_person_parent")
 
 
 @frappe.whitelist()
@@ -23,7 +24,6 @@ def setup_agent(agent: str) -> dict:
 
 	changed = False
 	for fieldname, ensure in (
-		("van_warehouse", ensure_van_warehouse),
 		("cash_account", ensure_cash_account),
 		("mode_of_payment", ensure_mode_of_payment),
 		("sales_person", ensure_sales_person),
@@ -38,7 +38,6 @@ def setup_agent(agent: str) -> dict:
 		doc.save()
 
 	return {
-		"van_warehouse": doc.van_warehouse,
 		"cash_account": doc.cash_account,
 		"mode_of_payment": doc.mode_of_payment,
 		"sales_person": doc.sales_person,
@@ -52,27 +51,6 @@ def check_settings(settings):
 			_("Set {0} in Mobile Sales Settings first.").format(", ".join(_(m) for m in missing)),
 			title=_("Mobile Sales Settings incomplete"),
 		)
-
-
-def ensure_van_warehouse(agent, settings) -> str:
-	abbr = frappe.get_cached_value("Company", settings.company, "abbr")
-	warehouse_name = f"{agent.agent_name} Van"
-	name = f"{warehouse_name} - {abbr}"
-	if frappe.db.exists("Warehouse", name):
-		return name
-
-	return (
-		frappe.get_doc(
-			{
-				"doctype": "Warehouse",
-				"warehouse_name": warehouse_name,
-				"parent_warehouse": settings.van_warehouse_group,
-				"company": settings.company,
-			}
-		)
-		.insert(ignore_permissions=True)
-		.name
-	)
 
 
 def ensure_cash_account(agent, settings) -> str:

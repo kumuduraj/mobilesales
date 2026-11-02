@@ -13,6 +13,9 @@
 						<div class="text-sm text-gray-500">{{ __("Trip") }}</div>
 						<div class="text-lg font-semibold">{{ trip.name }}</div>
 						<div class="text-sm text-gray-500">{{ trip.trip_date }} · {{ trip.route || __("No route") }}</div>
+						<div v-if="trip.vehicle" class="text-sm text-gray-500">
+							🚐 {{ trip.vehicle }}<span v-if="trip.helper"> · {{ __("Helper") }}: {{ trip.helper }}</span>
+						</div>
 					</div>
 					<span class="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium">{{ __(trip.status) }}</span>
 				</div>
