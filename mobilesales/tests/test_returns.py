@@ -11,7 +11,7 @@ from erpnext.stock.doctype.batch.batch import get_batch_qty
 from mobilesales.api import mobile as api
 from mobilesales.services import invoicing, returns
 from mobilesales.services import trip as trip_service
-from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, as_user
+from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, as_user, leaf
 
 
 class TestReturnsAndDiscounts(MobileSalesTestCase):
@@ -131,6 +131,32 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		plain = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])
 		self.assertTrue(frappe.get_doc("Sales Invoice", plain.sales_invoice).items[0].pricing_rules)
 
+	def test_free_item_rule_kept_with_manual_discount_elsewhere(self):
+		frappe.get_doc(
+			{
+				"doctype": "Pricing Rule",
+				"title": f"{PREFIX} buy 2 get 1",
+				"apply_on": "Item Code",
+				"items": [{"item_code": self.plain_item}],
+				"selling": 1,
+				"company": self.company,
+				"price_or_product_discount": "Product",
+				"min_qty": 2,
+				"same_item": 1,
+				"free_qty": 1,
+			}
+		).insert()
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "max_discount_pct", 10)
+		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 2}, {"item_code": self.batch_item, "qty": 1, "discount_percentage": 5}])
+		si = frappe.get_doc("Sales Invoice", visit.sales_invoice)
+		free = [(i.item_code, i.qty, i.rate) for i in si.items if i.is_free_item]
+		self.assertEqual(free, [(self.plain_item, 1, 0)])
+		self.assertEqual([i.rate for i in si.items if not i.is_free_item], [100, 190])
+		self.assertEqual((si.grand_total, visit.grand_total, si.ignore_pricing_rule), (390, 390, 0))
+		# a manual discount on the free-item line itself would need the rates frozen: blocked
+		with self.assertRaisesRegex(frappe.ValidationError, "free-item offer"):
+			self.visit(items=[{"item_code": self.plain_item, "qty": 2, "discount_percentage": 5}], submit=False)
+
 	# returns and credit set-off
 
 	def test_return_only_sets_off_the_returned_invoice(self):
@@ -154,6 +180,8 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		)
 		self.assertEqual(self.returns_qty(self.plain_item), 1)
 		self.assertEqual(frappe.db.get_value("Mobile Trip", self.trip.name, "invoices"), 1)  # credit notes are not sales
+		with as_user(self.agent_a.user):  # the agent reprints the credit note on the 4-inch format
+			self.assertIn(note.name, frappe.get_print("Sales Invoice", note.name, print_format="Mobile Invoice 4in"))
 
 	def test_return_nets_against_todays_sale(self):
 		paid = self.visit(items=[{"item_code": self.plain_item, "qty": 2}])
@@ -194,6 +222,47 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		visit = self.visit("Collection Only", return_items=rows, collect_previous=[{"sales_invoice": previous, "allocated": 50}])
 		self.assertEqual((visit.credit_applied, visit.total_collected), (100, 50))
 		self.assertEqual(self.outstanding(previous), 0)
+
+	def test_credit_note_matches_erpnext_make_sales_return(self):
+		"""Our field-by-field credit note equals ERPNext's own return mapper for the same lines."""
+		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
+
+		sale = self.visit(items=[{"item_code": self.plain_item, "qty": 3}, {"item_code": self.batch_item, "qty": 6}])
+		rows = [self.ret(self.plain_item, 2, sale.sales_invoice), self.ret(self.batch_item, 6, sale.sales_invoice)]
+		reference = make_sales_return(sale.sales_invoice)  # Administrator, comparison only, before ours
+		reference.update_stock = 1
+		for item in reference.items:
+			item.warehouse = self.customer_returns
+			if item.item_code == self.plain_item:
+				item.qty = -2
+		reference.set_warehouse = self.customer_returns
+		reference.calculate_taxes_and_totals()
+		ref_items = {i.item_code: i for i in reference.items}
+		visit = self.visit("Return Only", return_items=rows)
+		ours = self.credit_note(visit)
+
+		def batches(item):
+			return returns._bundle_batches(item)
+
+		self.assertEqual((ours.return_against, ours.customer, ours.is_return), (reference.return_against, reference.customer, 1))
+		for code in (self.plain_item, self.batch_item):
+			mine = [i for i in ours.items if i.item_code == code]
+			ref = ref_items[code]
+			self.assertEqual(sum(flt(i.qty) for i in mine), flt(ref.qty), code)
+			self.assertEqual({i.rate for i in mine}, {ref.rate}, code)
+			self.assertEqual({i.sales_invoice_item for i in mine}, {ref.sales_invoice_item}, code)
+			self.assertEqual({i.uom for i in mine}, {ref.uom}, code)
+		# batches: ours are the batches ERPNext would return (the original line's bundle)
+		original = {i.item_code: i for i in frappe.get_doc("Sales Invoice", sale.sales_invoice).items}
+		sold = {b: abs(q) for b, q in returns._bundle_batches(original[self.batch_item]).items()}
+		credited = {}
+		for item in ours.items:
+			if item.item_code == self.batch_item:
+				for b, q in batches(item).items():
+					credited[b] = credited.get(b, 0) + abs(q)
+		self.assertEqual(credited, sold)
+		self.assertEqual([(t.account_head, t.rate) for t in ours.taxes], [(t.account_head, t.rate) for t in reference.taxes])
+		self.assertEqual((ours.net_total, ours.grand_total), (reference.net_total, reference.grand_total))
 
 	def test_batch_returns_follow_the_original_invoice(self):
 		sale = self.visit(items=[{"item_code": self.batch_item, "qty": 6}])  # FIFO: A 5, B 1
@@ -265,6 +334,18 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 				"items": [{"item_code": self.plain_item, "qty": -1, "rate": 100, "warehouse": self.customer_returns}]})  # fmt: skip
 			with self.assertRaisesRegex(frappe.ValidationError, "can only be created by the Mobile Sales app"):
 				manual_note.insert()
+			supplier = frappe.get_doc({"doctype": "Supplier", "supplier_name": f"{PREFIX} Supplier", "supplier_group": leaf("Supplier Group")})
+			supplier.flags.ignore_permissions = True
+			supplier.insert()
+
+			def receipt(warehouse):
+				return frappe.get_doc({"doctype": "Purchase Receipt", "company": self.company, "supplier": supplier.name,
+					"items": [{"item_code": self.plain_item, "qty": 1, "rate": 50, "warehouse": warehouse}]})  # fmt: skip
+
+			standard = receipt(self.store).insert()  # untouched: standard purchase into a normal store
+			standard.submit()
+			with self.assertRaisesRegex(frappe.ValidationError, "receives stock only from Mobile Sales credit notes"):
+				receipt(self.customer_returns).insert()
 		self.assertEqual(self.returns_qty(self.plain_item), 2)
 
 	# phone API

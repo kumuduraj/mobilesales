@@ -503,6 +503,9 @@ class TestMobileSettlement(MobileSalesTestCase):
 		self.assertEqual((damage.mobile_purpose, damage.items[0].s_warehouse, damage.items[0].t_warehouse), ("Return Damage", returns_wh, self.damage_wh))
 		self.assertEqual(frappe.db.get_value("Stock Entry", done.return_shortage_entry, "mobile_purpose"), "Return Shortage")
 		self.assertEqual(returns_qty(), 1)  # the good return stays for the store
+		sheet = frappe.get_print("Mobile Settlement", done.name, print_format="Mobile Settlement Sheet")
+		self.assertIn("Customer Returns Received", sheet)
+		self.assertIn(done.return_shortage_entry, sheet)
 		purposes = [r.purpose for r in frappe.get_doc("Mobile Trip", trip.name).stock_entries]
 		self.assertIn("Return Damage", purposes)
 		self.assertIn("Return Shortage", purposes)

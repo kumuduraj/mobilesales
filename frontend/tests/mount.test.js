@@ -12,7 +12,7 @@ const AGENT = {
 	mode_of_payment: "Mobile Cash - Van Agent 1",
 	selling_price_list: "Standard Selling",
 	default_route: "Pilot Route 1",
-	max_discount_pct: 0,
+	max_discount_pct: 10,
 	credit_limit_per_invoice: 0,
 }
 const trip = (status) => ({
@@ -47,9 +47,11 @@ const boot = (agent, openTrip) => ({
 			require_geolocation: 0,
 			apply_customer_updates_directly: 1,
 			selling_price_list: "Standard Selling",
+			returns_enabled: 1,
 			currency: "LKR",
 		},
 		no_sale_reasons: [{ name: "Stock Sufficient", category: "Stock", requires_remark: 0 }],
+		return_reasons: [{ name: "Damaged", requires_remark: 0 }, { name: "Other", requires_remark: 1 }],
 		denominations: [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1],
 	},
 })
@@ -103,7 +105,48 @@ const API = {
 			rounded_total: 0,
 			total_collected: 0,
 		},
+		{
+			name: "CV-26-000003",
+			docstatus: 1,
+			visit_datetime: "2026-11-01 12:00:00",
+			customer: "Pilot Customer 1",
+			customer_name: "Pilot Customer 1",
+			off_route: 0,
+			outcome: "Return Only",
+			no_sale_reason: null,
+			sales_invoice: null,
+			payment_entry: null,
+			credit_notes: "MB-SRET-26-00001",
+			return_total: 100,
+			credit_applied: 100,
+			grand_total: 0,
+			rounded_total: 0,
+			total_collected: 0,
+		},
 	],
+	get_customer_invoices: [{ name: "MB-SINV-26-00002", posting_date: "2026-11-01", grand_total: 1325 }],
+	get_returnable_lines: [
+		{ sales_invoice_item: "row-1", item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", returnable_qty: 1, rate: 1325, batches: [{ batch_no: "ARCP003-261016-01", qty: 1 }] },
+	],
+	search_items: [],
+	price_cart: {
+		lines: [],
+		net_total: 0,
+		total_taxes: 0,
+		grand_total: 0,
+		rounded_total: 0,
+		taxes: [],
+		discount_amount: 0,
+		manual_discount_pct: 0,
+		max_discount_pct: 10,
+		returns: [{ item_code: "ARCP003", qty: 1, uom: "Kg", rate: 1325, amount: 1325, against_invoice: "MB-SINV-26-00002" }],
+		return_total: 1325,
+		credit_applied: 1325,
+		credit_on_sale: 0,
+		credit_on_previous: { "MB-SINV-26-00000": 1325 },
+		due_on_sale: 0,
+		credit_left: 0,
+	},
 	get_customer_form_options: {
 		customer_groups: ["Commercial", "Retail"],
 		territories: ["Colombo", "Sri Lanka"],
@@ -123,6 +166,7 @@ const API = {
 		address: { name: "Pilot Address", address_line1: "1 Main Street", city: "Colombo", country: "Sri Lanka" },
 		outstanding_invoices: [{ name: "MB-SINV-26-00000", posting_date: "2026-10-31", grand_total: 1325, outstanding_amount: 1325 }],
 		outstanding: 1325,
+		credit_available: 250,
 		shelf_stock: [{ item_code: "ARCP003", qty_on_shelf: 1, uom: "Kg", expiry_date: null, competitor_item: null }],
 	},
 	get_settlement_draft: {
@@ -243,5 +287,101 @@ describe("screens", () => {
 			{ value: "Colombo", options: ["Colombo", "Sri Lanka"] },
 			{ value: "", options: ["", "Pilot Route 1", "Pilot Route 2"] },
 		])
+	})
+})
+
+describe("visit wizard (Phase 5b)", () => {
+	const buttons = (root) => [...root.querySelectorAll("button")]
+	const click = (root, label) => {
+		const button = buttons(root).find((b) => b.textContent.trim().startsWith(label) && !b.disabled)
+		if (!button) throw new Error(`no enabled button "${label}" in: ${root.textContent.replace(/\s+/g, " ").slice(0, 300)}`)
+		button.click()
+	}
+	const choose = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("change"))
+	}
+	const type = (el, value) => {
+		el.value = value
+		el.dispatchEvent(new Event("input"))
+	}
+	const toOutcome = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			click(root, "Next")
+			await settle()
+		}
+	}
+
+	it("details show the credit available; outcomes offer Return Only", async () => {
+		let details = ""
+		const text = await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+			click(root, "Next")
+			await settle()
+			details = root.textContent.replace(/\s+/g, " ")
+			click(root, "Next")
+			await settle()
+			click(root, "Next")
+			await settle()
+		})
+		expect(problems).toEqual([])
+		expect(details).toContain("Credit available")
+		expect(details).toContain("250.00")
+		expect(text).toContain("Return Only")
+	})
+
+	it("Sale shows line and invoice discount inputs", async () => {
+		const text = await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+			await toOutcome(root)
+			click(root, "Sale")
+			await settle()
+			click(root, "+")
+			await settle()
+		})
+		expect(problems).toEqual([])
+		expect(text).toContain("Disc. %")
+		expect(text).toContain("Invoice discount")
+	})
+
+	it("Return Only: returns step, credit, collection and review", async () => {
+		const seen = {}
+		const text = await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+			await toOutcome(root)
+			click(root, "Return Only")
+			await settle()
+			click(root, "Next")
+			await settle()
+			seen.returns = root.textContent.replace(/\s+/g, " ")
+			const card = root.querySelector(".rounded-lg.border")
+			choose(card.querySelectorAll("select")[0], "MB-SINV-26-00002")
+			for (let i = 0; i < 3; i++) await settle()
+			choose(card.querySelectorAll("select")[1], "row-1")
+			type(card.querySelector("input[type=number]"), "1")
+			choose(card.querySelectorAll("select")[3], "Damaged")
+			await settle()
+			click(root, "+ Add return")
+			for (let i = 0; i < 3; i++) await settle()
+			seen.added = root.textContent.replace(/\s+/g, " ")
+			click(root, "Next")
+			for (let i = 0; i < 3; i++) await settle()
+			seen.collection = root.textContent.replace(/\s+/g, " ")
+			click(root, "Next")
+			await settle()
+		})
+		expect(problems).toEqual([])
+		expect(seen.returns).toContain("Returns from the customer")
+		expect(seen.added).toContain("Kochchi Chicken Meat × 1 Kg")
+		expect(seen.added).toContain("Return credit")
+		expect(seen.collection).toContain("Return credit applied")
+		expect(text).toContain("Review")
+		expect(text).toContain("Credit applied")
+		const priceCalls = globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("price_cart"))
+		expect(priceCalls.length).toBeGreaterThan(0)
+	})
+
+	it("History offers the credit note reprint and shows returns", async () => {
+		const text = await render(boot(AGENT, trip("In Field")), "/history")
+		expect(problems).toEqual([])
+		expect(text).toContain("Credit note")
+		expect(text).toContain("returns")
 	})
 })

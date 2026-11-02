@@ -110,6 +110,14 @@ def apply_manual_discounts(visit, si):
 		price_list_value += flt(item.qty) * (flt(item.price_list_rate) or pricing_rule_rate)
 		manual += flt(item.qty) * (pricing_rule_rate - final)
 
+	if freeze and any(item.is_free_item for item in si.items):
+		frappe.throw(
+			_(
+				"A free-item offer applies to this invoice, so a manual discount on a line with a pricing rule "
+				"is not possible (the free item would be lost). Remove that line discount."
+			),
+			title=_("Discount not possible"),
+		)
 	if freeze:
 		# ERPNext re-applies pricing rules on save, which would drop the manual discount on those lines:
 		# keep every computed rate and save the invoice with ignore_pricing_rule (the visit keeps
