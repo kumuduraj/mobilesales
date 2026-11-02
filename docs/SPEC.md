@@ -438,6 +438,7 @@ All Script Reports read Customer Visit, Mobile Settlement and the standard ledge
 | Outstanding by Agent | Agent × customer | credit invoices raised by agent still outstanding, ageing buckets |
 
 **Workspace "Mobile Sales"**: shortcuts (Trip, Visit, Settlement, Agent, Route), Number Cards (Open Trips, Today's Visits, Today's Mobile Sales, Today's Collections, Pending Settlements, Today's Cash Variance), Dashboard Charts (Mobile sales by agent — bar, last 30 days; Strike rate trend — line; No-sale reasons — donut).
+Phase 6: add a link to **Mobile Visit Rejection** (v0.6.1: every visit the server refused, with user, agent, trip, customer and the message the agent saw; supervisor read-only) in the workspace.
 
 Standard reports keep working: filter Sales Register / Accounts Receivable by `is_mobile_sale` or `mobile_trip` to split mobile from standard sales.
 
