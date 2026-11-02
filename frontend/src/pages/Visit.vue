@@ -148,23 +148,29 @@
 			<div v-for="(r, i) in returnRows" :key="i" class="flex items-start justify-between border-t border-gray-100 py-2 text-sm">
 				<div>
 					<div class="font-medium">{{ r.item_name || r.item_code }} × {{ qty(r.qty) }} {{ r.uom }}</div>
-					<div class="text-xs text-gray-500">{{ r.against_invoice || __("No invoice") }} · {{ r.return_reason }} · {{ __(r.condition) }}</div>
+					<div class="text-xs text-gray-500">{{ r.against_invoice || __("No invoice") }}</div>
+					<div class="mt-1 flex flex-wrap gap-1 text-xs">
+						<span class="rounded-full bg-gray-100 px-2 py-0.5 text-gray-800">{{ __("Reason") }}: <b>{{ r.return_reason }}</b></span>
+						<span class="rounded-full px-2 py-0.5" :class="conditionClass(r.condition)">{{ __("Condition") }}: <b>{{ __(r.condition) }}</b></span>
+					</div>
+					<div v-if="r.remarks" class="text-xs text-gray-500">{{ __("Remarks") }}: {{ r.remarks }}</div>
 					<div v-if="returnLine(i)" class="text-xs text-gray-600">{{ money(returnLine(i).rate) }} = {{ money(returnLine(i).amount) }}</div>
 				</div>
 				<button class="text-sm text-red-700" @click="removeReturn(i)">{{ __("Remove") }}</button>
 			</div>
 			<div class="space-y-2 rounded-lg border border-gray-200 p-3">
 				<select v-model="newReturn.against_invoice" class="field" @change="loadReturnLines">
-					<option value="">{{ __("No invoice (item without batches)") }}</option>
+					<option value="" disabled>{{ __("Choose invoice…") }}</option>
+					<option :value="NO_INVOICE">{{ __("No invoice (item without batches)") }}</option>
 					<option v-for="inv in customerInvoices" :key="inv.name" :value="inv.name">{{ inv.name }} · {{ inv.posting_date }}</option>
 				</select>
-				<select v-if="newReturn.against_invoice" v-model="newReturn.sales_invoice_item" class="field">
+				<select v-if="newReturn.against_invoice && newReturn.against_invoice !== NO_INVOICE" v-model="newReturn.sales_invoice_item" class="field">
 					<option value="">{{ __("Item…") }}</option>
 					<option v-for="l in returnLines" :key="l.sales_invoice_item" :value="l.sales_invoice_item">
 						{{ l.item_name }} · {{ __("up to") }} {{ qty(l.returnable_qty) }} {{ l.uom }} · {{ money(l.rate) }}
 					</option>
 				</select>
-				<template v-else>
+				<template v-else-if="newReturn.against_invoice === NO_INVOICE">
 					<input v-model.trim="itemQuery" class="field" type="search" :placeholder="__('Search item')" @input="searchReturnItems" />
 					<select v-if="itemResults.length" v-model="newReturn.item_code" class="field">
 						<option value="">{{ __("Item…") }}</option>
@@ -173,7 +179,7 @@
 				</template>
 				<div class="grid grid-cols-2 gap-2">
 					<input v-model.number="newReturn.qty" class="field" type="number" inputmode="decimal" min="0" :placeholder="__('Qty')" />
-					<select v-model="newReturn.condition" class="field">
+					<select v-model="newReturn.condition" class="field" :aria-label="__('Condition')">
 						<option value="Resaleable">{{ __("Resaleable") }}</option>
 						<option value="Damaged">{{ __("Damaged") }}</option>
 					</select>
@@ -185,8 +191,9 @@
 				<input v-model.trim="newReturn.remarks" class="field" :placeholder="returnRemarkRequired ? __('Remarks *') : __('Remarks (optional)')" />
 				<div class="grid grid-cols-3 gap-2">
 					<button class="btn-secondary col-span-2" :disabled="!canAddReturn" @click="addReturn">+ {{ __("Add return") }}</button>
-					<button class="btn-secondary" :disabled="!pendingReturn" @click="clearReturn">{{ __("Clear") }}</button>
+					<button class="btn-secondary" :disabled="!pendingReturn && !newReturn.against_invoice" @click="clearReturn">{{ __("Clear") }}</button>
 				</div>
+				<p v-if="returnMissing && newReturn.against_invoice" class="text-sm text-gray-700">{{ returnMissing }}</p>
 				<p v-if="pendingReturn" class="text-sm font-medium text-amber-700">
 					{{ __("This return is not added yet: tap + Add return (or Clear) before Next.") }}
 				</p>
@@ -235,8 +242,11 @@
 			<div class="flex justify-between"><span class="text-gray-500">{{ __("Outcome") }}</span><span class="font-semibold">{{ __(form.outcome) }}</span></div>
 			<div v-if="form.outcome === 'No Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Reason") }}</span><span>{{ form.no_sale_reason }}</span></div>
 			<div v-if="form.outcome === 'Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Invoice total") }}</span><span>{{ money(priced?.rounded_total) }}</span></div>
-			<div v-for="r in returnRows" :key="r.item_code + r.against_invoice + r.qty" class="flex justify-between text-gray-600">
-				<span>{{ __("Return") }}: {{ r.item_name || r.item_code }} × {{ qty(r.qty) }} {{ r.uom }}</span><span>{{ r.against_invoice || __("No invoice") }}</span>
+			<div v-for="r in returnRows" :key="r.item_code + r.against_invoice + r.qty" class="text-gray-600">
+				<div class="flex justify-between">
+					<span>{{ __("Return") }}: {{ r.item_name || r.item_code }} × {{ qty(r.qty) }} {{ r.uom }}</span><span>{{ r.against_invoice || __("No invoice") }}</span>
+				</div>
+				<div class="text-xs">{{ __("Reason") }}: <b>{{ r.return_reason }}</b> · {{ __("Condition") }}: <b>{{ __(r.condition) }}</b></div>
 			</div>
 			<div v-if="returnRows.length" class="flex justify-between"><span class="text-gray-500">{{ __("Return credit") }}</span><span>{{ money(priced?.return_total) }}</span></div>
 			<div v-if="priced?.credit_applied" class="flex justify-between"><span class="text-gray-500">{{ __("Credit applied") }}</span><span>{{ money(priced.credit_applied) }}</span></div>
@@ -276,15 +286,62 @@
 		<div v-if="!done && !loadError && card" class="flex gap-2">
 			<button v-if="stepIndex > 0" class="btn-secondary flex-1" :disabled="busy" @click="go(-1)">{{ __("Back") }}</button>
 			<button v-if="step !== 'review'" class="btn-primary flex-1" :disabled="!canNext" @click="go(1)">{{ __("Next") }}</button>
-			<button v-else class="btn-primary flex-1" :disabled="busy || !online" @click="submit">
+			<button v-else class="btn-primary flex-1" :disabled="busy || !online" @click="askSubmit">
 				{{ busy ? __("Saving…") : __("Submit visit") }}
 			</button>
+		</div>
+
+		<!-- Last check before submit: what will be invoiced, returned and collected (live run MTRIP-26-00005) -->
+		<div v-if="confirming" class="fixed inset-0 z-20 flex items-end justify-center bg-black/40 p-3 sm:items-center" role="dialog" aria-modal="true">
+			<div class="card max-h-[90vh] w-full max-w-md space-y-3 overflow-y-auto text-sm">
+				<div class="text-lg font-semibold">{{ __("Submit this visit?") }}</div>
+				<div class="flex justify-between"><span class="text-gray-500">{{ card?.customer_name || props.customer }}</span><span class="font-semibold">{{ __(form.outcome) }}</span></div>
+				<div v-if="form.outcome === 'No Sale'" class="text-gray-600">{{ __("Reason") }}: {{ form.no_sale_reason }}</div>
+				<div v-if="form.outcome === 'Sale' && priced" class="space-y-1 border-t border-gray-100 pt-2">
+					<div class="font-medium">{{ __("Sale") }}</div>
+					<div v-for="l in priced.lines" :key="l.item_code">
+						<div class="flex justify-between"><span>{{ l.item_name }} × <b>{{ qty(l.qty) }} {{ l.uom }}</b></span><span>{{ money(l.amount) }}</span></div>
+						<div class="text-xs text-gray-500">
+							{{ money(l.rate) }} / {{ l.uom }}
+							<template v-if="Number(l.discount_amount) > 0"> · {{ __("Disc.") }} {{ Number(l.discount_percentage).toFixed(2) }}% ({{ money(l.discount_amount) }} / {{ l.uom }})</template>
+						</div>
+					</div>
+					<div v-if="priced.discount_amount" class="flex justify-between text-gray-600">
+						<span>{{ __("Invoice discount") }}<template v-if="priced.additional_discount_percentage"> ({{ priced.additional_discount_percentage }}%)</template></span>
+						<span>− {{ money(priced.discount_amount) }}</span>
+					</div>
+					<div class="flex justify-between font-semibold"><span>{{ __("Invoice total") }}</span><span>{{ money(priced.rounded_total) }}</span></div>
+				</div>
+				<div v-if="returnRows.length" class="space-y-1 border-t border-gray-100 pt-2">
+					<div class="font-medium">{{ __("Returns") }}</div>
+					<div v-for="(r, i) in returnRows" :key="i">
+						<div class="flex justify-between">
+							<span>{{ r.item_name || r.item_code }} × <b>{{ qty(r.qty) }} {{ r.uom }}</b></span>
+							<span>{{ returnLine(i) ? money(returnLine(i).amount) : "" }}</span>
+						</div>
+						<div class="text-xs text-gray-600">
+							{{ r.against_invoice || __("No invoice") }} · {{ __("Reason") }}: <b>{{ r.return_reason }}</b> · {{ __("Condition") }}: <b>{{ __(r.condition) }}</b>
+						</div>
+					</div>
+					<div v-if="priced?.credit_applied" class="flex justify-between text-gray-600"><span>{{ __("Return credit applied") }}</span><span>− {{ money(priced.credit_applied) }}</span></div>
+				</div>
+				<div v-for="r in previousRows.filter((p) => p.allocated > 0)" :key="r.sales_invoice" class="flex justify-between text-gray-600">
+					<span>{{ __("Previous invoice") }} {{ r.sales_invoice }}</span><span>{{ money(r.allocated) }}</span>
+				</div>
+				<div v-if="RETURN_OUTCOMES.includes(form.outcome)" class="flex justify-between border-t border-gray-200 pt-2 text-base font-semibold">
+					<span>{{ __("Cash to collect now") }}</span><span>{{ money(totalCollected) }}</span>
+				</div>
+				<div class="grid grid-cols-2 gap-2">
+					<button ref="cancelButton" class="btn-secondary" @click="confirming = false">{{ __("Cancel") }}</button>
+					<button class="btn-primary" :disabled="busy" @click="confirmSubmit">{{ __("Confirm and submit") }}</button>
+				</div>
+			</div>
 		</div>
 	</div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from "vue"
+import { computed, nextTick, onMounted, reactive, ref } from "vue"
 import { call, m } from "../api"
 import { loadContext } from "../context"
 import { money, newClientRef, online, printUrl, qty, session } from "../state"
@@ -293,6 +350,7 @@ import { __ } from "../translation"
 const props = defineProps({ customer: { type: String, required: true } })
 const clientRef = newClientRef() // once per wizard session: re-submitting returns the same visit
 const RETURN_OUTCOMES = ["Sale", "Collection Only", "Return Only"]
+const NO_INVOICE = "__none__" // explicit "No invoice" choice: the picker itself starts empty
 const stepLabels = {
 	checkin: __("1. Check-in"),
 	details: __("2. Customer details"),
@@ -415,14 +473,22 @@ const dueOnSale = computed(() => Number(priced.value?.due_on_sale ?? priced.valu
 const creditNotes = computed(() => (done.value?.credit_notes || "").split(",").map((n) => n.trim()).filter(Boolean))
 const returnRemarkRequired = computed(() => !!returnReasons.value.find((r) => r.name === newReturn.return_reason)?.requires_remark)
 // A return filled in but not added must never be dropped silently (live run MTRIP-26-00005).
-const pendingReturn = computed(() => !!(newReturn.against_invoice || newReturn.item_code || Number(newReturn.qty) > 0 || newReturn.return_reason))
-const canAddReturn = computed(
-	() =>
-		Number(newReturn.qty) > 0 &&
-		!!newReturn.return_reason &&
-		(!returnRemarkRequired.value || !!newReturn.remarks) &&
-		(newReturn.against_invoice ? !!newReturn.sales_invoice_item : !!newReturn.item_code)
-)
+// Only an item or a quantity makes it pending: a picked invoice alone loses nothing.
+const pendingReturn = computed(() => !!(newReturn.sales_invoice_item || newReturn.item_code || Number(newReturn.qty) > 0))
+const chosenLine = computed(() => returnLines.value.find((l) => l.sales_invoice_item === newReturn.sales_invoice_item))
+// The first thing still missing before "+ Add return" can be used ("" when it can).
+const returnMissing = computed(() => {
+	if (!newReturn.against_invoice) return __("Choose the invoice (or No invoice).")
+	if (newReturn.against_invoice === NO_INVOICE ? !newReturn.item_code : !newReturn.sales_invoice_item) return __("Choose the item.")
+	if (!(Number(newReturn.qty) > 0)) return __("Enter a quantity above 0.")
+	if (chosenLine.value && Number(newReturn.qty) > Number(chosenLine.value.returnable_qty))
+		return __("At most {0} {1} can be returned from this invoice.", [qty(chosenLine.value.returnable_qty), chosenLine.value.uom])
+	if (!newReturn.return_reason) return __("Choose a reason.")
+	if (returnRemarkRequired.value && !newReturn.remarks) return __("Remarks required for reason {0}.", [newReturn.return_reason])
+	return ""
+})
+const canAddReturn = computed(() => !returnMissing.value)
+const conditionClass = (condition) => (condition === "Damaged" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800")
 const shelfRows = computed(() => shelf.value.filter((r) => r.item_code))
 const totalCollected = computed(
 	() => (form.outcome === "Sale" ? Number(form.collect_amount || 0) : 0) + previousRows.value.reduce((s, r) => s + r.allocated, 0)
@@ -458,7 +524,7 @@ function creditOn(invoice) {
 async function loadReturnLines() {
 	newReturn.sales_invoice_item = ""
 	returnLines.value = []
-	if (!newReturn.against_invoice) return
+	if (!newReturn.against_invoice || newReturn.against_invoice === NO_INVOICE) return
 	try {
 		returnLines.value = await call(m("get_returnable_lines"), { invoice: newReturn.against_invoice, customer: props.customer })
 	} catch (e) {
@@ -483,6 +549,7 @@ function addReturn() {
 	const item = itemResults.value.find((it) => it.item_code === newReturn.item_code)
 	returnRows.value.push({
 		...newReturn,
+		against_invoice: newReturn.against_invoice === NO_INVOICE ? "" : newReturn.against_invoice,
 		item_code: line ? line.item_code : newReturn.item_code,
 		item_name: line ? line.item_name : item?.item_name,
 		uom: line ? line.uom : item?.stock_uom,
@@ -580,6 +647,22 @@ function takePhoto(event) {
 		URL.revokeObjectURL(img.src)
 	}
 	img.src = URL.createObjectURL(file)
+}
+
+const confirming = ref(false)
+const cancelButton = ref(null)
+
+async function askSubmit() {
+	if (busy.value) return
+	message.value = ""
+	confirming.value = true
+	await nextTick()
+	cancelButton.value?.focus() // default: Cancel
+}
+
+function confirmSubmit() {
+	confirming.value = false
+	return submit()
 }
 
 async function submit() {

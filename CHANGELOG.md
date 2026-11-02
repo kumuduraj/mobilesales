@@ -1,12 +1,31 @@
-## v0.6.1 — fixes from the v0.6.0 live run (unreleased)
+## v0.6.1 — fixes from the v0.6.0 live run
 
 - Fix: the Returns step dropped a return that was filled in but not added with "+ Add return" (live run
   MTRIP-26-00005: the visit was submitted without it). Next is now blocked while a return is pending, with a
   hint and a Clear button; the Review step lists every return line; the done screen shows the return credit.
 - Mobile Invoice 4in: list price and discount per discounted line, Subtotal and Invoice discount lines, and
   Grand Total / Rounding adjustment when the total is rounded.
+- Mobile Invoice 4in: "Return credit applied" and "Paid (cash)" are printed separately (Paid used to include
+  the credit note set-off: MB-SINV-26-00004 printed Paid 2,518 for 1,193 cash + 1,325 credit). A credit note
+  prints where its credit went ("Credit applied to …") and the credit left on account. Invoice discount
+  prints one minus sign and the percentage without trailing zeros.
+- Fix: an invoice discount entered as a percentage stays a percentage on the invoice and the visit (the
+  submit rebuild turned 5% into a fixed 132.50).
+- New Mobile Visit Rejection log (supervisor: read, report, export): every submit_visit the server refuses
+  is recorded with user, agent, trip, customer, outcome, client_ref and the message the agent saw. Written
+  after the request rollback in its own transaction.
+- Returns step: the invoice picker starts on "Choose invoice…" ("No invoice" is an explicit choice); the
+  not-added hint appears only once an item or quantity is entered; while "+ Add return" is disabled the
+  form says what is missing (invoice, item, qty, qty above returnable, reason, remarks for reason X).
+- Return lines show reason and condition as labelled badges (Damaged in red) with the remarks, on the
+  Returns step and on Review.
+- Submit visit asks for confirmation with a summary: sale lines (qty, rate, line discount), invoice
+  discount, total, returns with invoice / reason / condition, credit applied, previous invoices and the cash
+  to collect now; Cancel has the focus.
 - Tests: the live-run steps through the phone API as the real agent (6% refused, return above the invoiced
-  qty refused, 1 sold + 1 returned = no cash); SPA test that a pending return blocks Next and is submitted.
+  qty refused, 1 sold + 1 returned = no cash; visit 2: refused submit logged, 5% kept, prints split credit and
+  cash); SPA tests: a pending return blocks Next and is submitted, empty picker and missing-field text, the
+  confirm dialog summary with Cancel focused.
 
 ## v0.6.0 — Phase 5b: Vehicles, discounts, customer returns
 

@@ -3,6 +3,8 @@ return warehouse), credit set-off against the returned invoice / today's sale / 
 cancel chain, customer-return warehouse guards and the phone API. Flows run as the real agent, cancel as
 the real supervisor (CLAUDE.md rule 13)."""
 
+from unittest.mock import patch
+
 import frappe
 from frappe.utils import flt, now_datetime, nowdate
 
@@ -413,6 +415,58 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		self.assertEqual((note.owner, note.return_against), (self.agent_a.user, earlier.sales_invoice))
 		self.assertEqual(frappe.db.get_value("Journal Entry", visit.credit_journal, "owner"), self.agent_a.user)
 		self.assertEqual({b.get("batch_no"): b.get("qty") for b in get_batch_qty(warehouse=self.customer_returns, item_code=self.batch_item)}, {self.batch_a: 1})
+
+	def test_live_run_visit_2_percent_discount_print_and_rejection_log(self):
+		"""MTRIP-26-00005 visit 2 as the real agent: a refused submit is logged for the supervisor, an
+		entered 5% invoice discount stays 5% on the invoice, and the prints split credit from cash."""
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, {"max_discount_pct": 5, "max_return_value_per_visit": 2000})
+		earlier = self.visit(items=[{"item_code": self.batch_item, "qty": 1}])
+		sale = [{"item_code": self.batch_item, "qty": 2}]
+		ret = [self.ret(self.batch_item, 1, earlier.sales_invoice, reason="Damaged", condition="Damaged")]
+		payload = {"client_ref": "live-3", "mobile_trip": self.trip.name, "customer": self.customer, "outcome": "Sale",
+			"sale_items": sale, "additional_discount_percentage": 5, "return_items": ret}  # fmt: skip
+
+		# 2 x 200 - 5% = 380, return credit 200: collecting the invoice total (380) instead of 180 is refused
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "Collect Now must be between 0 and the 180"):
+				api.submit_visit({**payload, "collect_amount": 380})
+			log = frappe.db.after_rollback._functions.pop()  # what the request's rollback would run
+			with patch.object(frappe.db, "commit") as commit:
+				log()
+			commit.assert_called_once()
+		rejection = frappe.get_last_doc("Mobile Visit Rejection", filters={"client_ref": "live-3"})
+		self.assertEqual(
+			(rejection.user, rejection.agent, rejection.mobile_trip, rejection.customer, rejection.outcome),
+			(self.agent_a.user, self.agent_a.name, self.trip.name, self.customer, "Sale"),
+		)
+		self.assertIn("Collect Now must be between 0 and the 180", rejection.message)
+		self.assertNotIn("<", rejection.message)
+		self.assertTrue(frappe.has_permission("Mobile Visit Rejection", "read", rejection, user=self.users.supervisor))
+		self.assertFalse(frappe.has_permission("Mobile Visit Rejection", "read", rejection, user=self.agent_a.user))
+
+		with as_user(self.agent_a.user):
+			result = api.submit_visit({**payload, "collect_amount": 180})
+		visit = frappe.get_doc("Customer Visit", result["name"])
+		si = frappe.get_doc("Sales Invoice", visit.sales_invoice)
+		note = self.credit_note(visit)
+		self.assertEqual((si.additional_discount_percentage, si.discount_amount, si.grand_total), (5, 20, 380))
+		self.assertEqual((visit.additional_discount_percentage, visit.discount_amount), (5, 20))
+		self.assertEqual((visit.total_collected, visit.credit_applied, self.outstanding(si.name)), (180, 200, 0))
+
+		def amounts(html):
+			return " ".join(frappe.utils.strip_html(html).split())
+
+		with as_user(self.agent_a.user):
+			invoice_html = amounts(frappe.get_print("Sales Invoice", si.name, print_format="Mobile Invoice 4in"))
+			note_html = amounts(frappe.get_print("Sales Invoice", note.name, print_format="Mobile Invoice 4in"))
+		self.assertRegex(invoice_html, r"Invoice discount \(5%\)\s*-\D*20\.00")
+		self.assertNotRegex(invoice_html, r"Invoice discount \(5%\)\s*-[^\d]*-")  # one minus sign, not "-Rs -20.00"
+		self.assertRegex(invoice_html, r"Return credit applied\s*-\D*200\.00")
+		self.assertRegex(invoice_html, r"Paid \(cash\)\s*\D*180\.00")
+		self.assertNotRegex(invoice_html, r"Paid \(cash\) \D*380")
+		self.assertRegex(note_html, rf"Credit applied to {si.name}\s*\D*200\.00")
+		self.assertRegex(note_html, r"Credit left on account\s*\D*0\.00")
+		self.assertNotIn("Paid (cash)", note_html)
 
 	def standard_invoice(self, rate):
 		si = frappe.get_doc(

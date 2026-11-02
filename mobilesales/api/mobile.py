@@ -5,11 +5,12 @@ ownership of the trip / visit / settlement it touches. Inputs are validated and 
 on the server; client totals are never trusted."""
 
 import base64
+from functools import partial
 
 import frappe
 from frappe import _
 from frappe.model.workflow import apply_workflow
-from frappe.utils import cint, flt, now_datetime
+from frappe.utils import cint, cstr, flt, now_datetime, strip_html
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -568,9 +569,39 @@ def _visit_summary(visit) -> dict:
 
 @frappe.whitelist()
 def submit_visit(payload: str | dict) -> dict:
-	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref."""
+	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref.
+	A refused visit is logged in Mobile Visit Rejection, so the supervisor sees what the agent was told."""
 	require_roles()
 	data = frappe._dict(frappe.parse_json(payload) or {})
+	try:
+		return _submit_visit(data)
+	except frappe.ValidationError as e:
+		frappe.db.after_rollback.add(partial(log_rejection, data, e))  # `e` is unbound after the except block
+		raise
+
+
+def log_rejection(data, error):
+	"""Runs after the request's rollback (the visit itself is gone), in its own small transaction."""
+	try:
+		frappe.get_doc(
+			{
+				"doctype": "Mobile Visit Rejection",
+				"user": frappe.session.user,
+				"agent": (session_agent() or {}).get("name"),
+				"mobile_trip": data.mobile_trip if data.mobile_trip and frappe.db.exists("Mobile Trip", data.mobile_trip) else None,
+				"customer": data.customer if data.customer and frappe.db.exists("Customer", data.customer) else None,
+				"outcome": cstr(data.outcome)[:140],
+				"client_ref": cstr(data.client_ref)[:140],
+				"message": strip_html(cstr(error)).strip()[:2000] or error.__class__.__name__,
+			}
+		).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		# best effort: the agent already gets the message; never hide it behind a logging failure
+		frappe.db.rollback()
+
+
+def _submit_visit(data) -> dict:
 	client_ref = (data.client_ref or "").strip()
 	if not client_ref or len(client_ref) > 140:
 		frappe.throw(_("client_ref is required."))

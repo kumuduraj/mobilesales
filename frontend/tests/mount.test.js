@@ -509,6 +509,9 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 				seen.review = root.textContent.replace(/\s+/g, " ")
 				button(root, "Submit visit").click()
 				await settleMore()
+				seen.submitsBeforeConfirm = globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("submit_visit")).length
+				button(root.querySelector("[role=dialog]"), "Confirm and submit").click()
+				await settleMore()
 				seen.done = root.textContent.replace(/\s+/g, " ")
 			})
 		} finally {
@@ -517,8 +520,9 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 		const submit = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith("submit_visit"))
 		const payload = JSON.parse(submit[1].body.get("payload"))
 		expect(problems).toEqual([])
-		expect(seen).toMatchObject({ nextDisabled: true, hint: true, stillOnReturns: true, nextAfterAdd: false })
+		expect(seen).toMatchObject({ nextDisabled: true, hint: true, stillOnReturns: true, nextAfterAdd: false, submitsBeforeConfirm: 0 })
 		expect(seen.review).toContain("Return: Kochchi Chicken Meat × 1 Kg")
+		expect(seen.review).toContain("Reason: Damaged · Condition: Damaged")
 		expect(payload.return_items).toEqual([
 			{ item_code: "ARCP003", qty: 1, uom: "Kg", against_invoice: "MB-SINV-26-00002", sales_invoice_item: "row-1",
 				return_reason: "Damaged", condition: "Damaged", remarks: null },
@@ -526,5 +530,129 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 		expect(payload.sale_items).toEqual([{ item_code: "ARCP003", qty: 1, discount_percentage: 0, discount_amount: 0 }])
 		expect(seen.done).toContain("Print credit note MB-SRET-26-00001")
 		expect(seen.done).toContain("Return credit")
+	})
+	const toReturns = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			button(root, "Next").click()
+			await settle()
+		}
+		button(root, "Sale").click()
+		await settle()
+		button(root, "+").click()
+		await new Promise((resolve) => setTimeout(resolve, 400)) // price_cart is debounced (350 ms)
+		await settleMore()
+		button(root, "Next").click()
+		await settleMore()
+		return root.querySelector(".rounded-lg.border")
+	}
+
+	it("starts with an empty invoice picker and says what is missing before + Add return", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				const text = () => root.textContent.replace(/\s+/g, " ")
+				seen.picker = form.querySelectorAll("select")[0].value
+				seen.start = text()
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				seen.afterInvoice = text()
+				seen.nextAfterInvoice = button(root, "Next").disabled
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "2"
+				qtyInput.dispatchEvent(new Event("input"))
+				await settle()
+				seen.tooMuch = text()
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[3], "Other")
+				await settle()
+				seen.other = text()
+				seen.addDisabled = button(root, "+ Add return").disabled
+				const remarks = form.querySelector("input:not([type=number]):not([type=search])")
+				remarks.value = "torn pack"
+				remarks.dispatchEvent(new Event("input"))
+				await settle()
+				seen.addEnabled = !button(root, "+ Add return").disabled
+				button(root, "+ Add return").click()
+				await settleMore()
+				seen.card = text()
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		expect(seen.picker).toBe("")
+		expect(seen.start).toContain("Choose invoice…")
+		expect(seen.start).not.toContain("This return is not added yet")
+		expect(seen.afterInvoice).toContain("Choose the item.")
+		expect(seen.afterInvoice).not.toContain("This return is not added yet")
+		expect(seen.nextAfterInvoice).toBe(false)
+		expect(seen.tooMuch).toContain("At most 1 Kg can be returned from this invoice.")
+		expect(seen.tooMuch).toContain("This return is not added yet")
+		expect(seen.other).toContain("Remarks required for reason Other.")
+		expect(seen.addDisabled).toBe(true)
+		expect(seen.addEnabled).toBe(true)
+		expect(seen.card).toContain("Reason: Other")
+		expect(seen.card).toContain("Condition: Resaleable")
+		expect(seen.card).toContain("Remarks: torn pack")
+	})
+
+	it("confirm dialog summarises sale lines, discounts, returns and cash before submitting", async () => {
+		const originalContext = API.get_context
+		const originalPrice = API.price_cart
+		API.get_context = boot(AGENT, trip("In Field")).context
+		API.price_cart = {
+			...originalPrice,
+			lines: [{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", uom: "Kg", qty: 2, price_list_rate: 1325, pricing_rule_rate: 1325,
+				discount_percentage: 0, discount_amount: 0, rate: 1325, amount: 2650, enough_stock: true }],
+			net_total: 2517.5, grand_total: 2517.5, rounded_total: 2518, discount_amount: 132.5, additional_discount_percentage: 5,
+			credit_on_sale: 1325, credit_on_previous: {}, due_on_sale: 1193,
+		}
+		const seen = {}
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				choose(form.querySelectorAll("select")[0], "MB-SINV-26-00002")
+				await settleMore()
+				choose(form.querySelectorAll("select")[1], "row-1")
+				const qtyInput = form.querySelector("input[type=number]")
+				qtyInput.value = "1"
+				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged")
+				choose(form.querySelectorAll("select")[3], "Damaged")
+				await settle()
+				button(root, "+ Add return").click()
+				await settleMore()
+				button(root, "Next").click() // collection: collect = due 1193
+				await settleMore()
+				button(root, "Next").click()
+				await settleMore()
+				button(root, "Submit visit").click()
+				await settleMore()
+				const dialog = root.querySelector("[role=dialog]")
+				seen.dialog = dialog?.textContent.replace(/\s+/g, " ")
+				seen.focused = document.activeElement?.textContent.trim()
+				button(dialog, "Cancel").click()
+				await settle()
+				seen.afterCancel = { dialog: !!root.querySelector("[role=dialog]"), submits: globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith("submit_visit")).length }
+			})
+		} finally {
+			API.get_context = originalContext
+			API.price_cart = originalPrice
+		}
+		expect(problems).toEqual([])
+		expect(seen.dialog).toContain("Kochchi Chicken Meat × 2 Kg")
+		expect(seen.dialog).toContain("Invoice discount (5%)")
+		expect(seen.dialog).toContain("132.50")
+		expect(seen.dialog).toContain("Reason: Damaged · Condition: Damaged")
+		expect(seen.dialog).toContain("Return credit applied")
+		expect(seen.dialog).toContain("Cash to collect now")
+		expect(seen.dialog).toContain("1,193.00")
+		expect(seen.focused).toBe("Cancel")
+		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
 	})
 })
