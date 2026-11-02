@@ -264,19 +264,7 @@
 			<div v-if="done.return_total" class="text-sm text-gray-600">
 				{{ __("Return credit") }} {{ money(done.return_total) }} · {{ __("applied") }} {{ money(done.credit_applied) }}
 			</div>
-			<a v-if="done.sales_invoice" class="btn-primary w-full" :href="printUrl('Sales Invoice', done.sales_invoice, 'Mobile Invoice 4in')" target="_blank">
-				{{ __("Print invoice") }} {{ done.sales_invoice }}
-			</a>
-			<a
-				v-for="note in creditNotes"
-				:key="note"
-				class="btn-secondary w-full"
-				:href="printUrl('Sales Invoice', note, 'Mobile Invoice 4in')"
-				target="_blank"
-			>{{ __("Print credit note") }} {{ note }}</a>
-			<a v-if="done.payment_entry" class="btn-secondary w-full" :href="printUrl('Payment Entry', done.payment_entry, 'Mobile Collection Receipt')" target="_blank">
-				{{ __("Print receipt") }} {{ done.payment_entry }}
-			</a>
+			<VisitPrints :visit="done" />
 			<p v-if="photoMessage" class="text-sm text-amber-700">{{ photoMessage }}</p>
 			<router-link to="/route" class="btn-secondary w-full">{{ __("Back to route") }}</router-link>
 		</div>
@@ -344,7 +332,8 @@
 import { computed, nextTick, onMounted, reactive, ref } from "vue"
 import { call, m } from "../api"
 import { loadContext } from "../context"
-import { money, newClientRef, online, printUrl, qty, session } from "../state"
+import VisitPrints from "../components/VisitPrints.vue"
+import { money, newClientRef, online, qty, session } from "../state"
 import { __ } from "../translation"
 
 const props = defineProps({ customer: { type: String, required: true } })
@@ -470,7 +459,6 @@ const discountPayload = computed(() => {
 	return invoiceDiscount.mode === "amt" ? { discount_amount: value } : { additional_discount_percentage: value }
 })
 const dueOnSale = computed(() => Number(priced.value?.due_on_sale ?? priced.value?.rounded_total ?? 0))
-const creditNotes = computed(() => (done.value?.credit_notes || "").split(",").map((n) => n.trim()).filter(Boolean))
 const returnRemarkRequired = computed(() => !!returnReasons.value.find((r) => r.name === newReturn.return_reason)?.requires_remark)
 // A return filled in but not added must never be dropped silently (live run MTRIP-26-00005).
 // Only an item or a quantity makes it pending: a picked invoice alone loses nothing.

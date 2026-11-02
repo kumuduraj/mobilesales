@@ -5,10 +5,19 @@
   hint and a Clear button; the Review step lists every return line; the done screen shows the return credit.
 - Mobile Invoice 4in: list price and discount per discounted line, Subtotal and Invoice discount lines, and
   Grand Total / Rounding adjustment when the total is rounded.
-- Mobile Invoice 4in: "Return credit applied" and "Paid (cash)" are printed separately (Paid used to include
-  the credit note set-off: MB-SINV-26-00004 printed Paid 2,518 for 1,193 cash + 1,325 credit). A credit note
-  prints where its credit went ("Credit applied to …") and the credit left on account. Invoice discount
-  prints one minus sign and the percentage without trailing zeros.
+- Prints (4-inch, standard, module Mobile Sales; figures from mobilesales.services.prints via hooks.jinja):
+  - New **Mobile Visit Bill** (Customer Visit): SALES (invoice, lines with list rate and discount, sales
+    total, rounding), RETURNS per return note (negative lines "against <invoice> · <reason> · <condition>",
+    return total), "Return credit applied" per invoice from the set-off journal, credit left on account,
+    net payable, paid (cash), balance, previous outstanding, total due, customer / agent signature lines.
+  - **Mobile Invoice 4in**: a credit set-off is never cash any more: "Return credit (MB-SRET-…) −x",
+    "Paid (cash)", "Balance" (MB-SINV-26-00004 printed Paid 2,518 for 1,193 cash + 1,325 credit). Invoice
+    discount prints one minus sign and the percentage without trailing zeros.
+  - New **Mobile Return Note** (Sales Invoice, is_return): RETURN NOTE, against invoice, visit, lines with
+    reason / condition / remarks, total credit, credit applied per invoice, credit left, signature lines.
+  - Phone (success screen and History): Print Bill (primary), Print Invoice, Print Return Note (one per note),
+    Print All (/mobile-sales-print: bill → invoice → return notes on one page), each only when the
+    document exists; the Receipt print stays for visits with a Payment Entry.
 - Fix: an invoice discount entered as a percentage stays a percentage on the invoice and the visit (the
   submit rebuild turned 5% into a fixed 132.50).
 - New Mobile Visit Rejection log (supervisor: read, report, export): every submit_visit the server refuses
@@ -24,8 +33,9 @@
   to collect now; Cancel has the focus.
 - Tests: the live-run steps through the phone API as the real agent (6% refused, return above the invoiced
   qty refused, 1 sold + 1 returned = no cash; visit 2: refused submit logged, 5% kept, prints split credit and
-  cash); SPA tests: a pending return blocks Next and is submitted, empty picker and missing-field text, the
-  confirm dialog summary with Cancel focused.
+  cash); print render tests (sale only, sale + return with split set-off, return only with credit left,
+  discounted sale with rounding; Print All page as agent / supervisor / other agent); SPA tests: a pending return blocks Next and is submitted, empty picker and missing-field text, the
+  confirm dialog summary with Cancel focused, the print buttons per case and the Print All order.
 
 ## v0.6.0 — Phase 5b: Vehicles, discounts, customer returns
 

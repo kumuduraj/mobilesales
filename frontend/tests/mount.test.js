@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMemoryHistory } from "vue-router"
 import { createMobileApp, routes } from "../src/app"
-import { session } from "../src/state"
+import { session, visitPrints } from "../src/state"
 
 const AGENT = {
 	name: "MSA-0001",
@@ -123,6 +123,24 @@ const API = {
 			grand_total: 0,
 			rounded_total: 0,
 			total_collected: 0,
+		},
+		{
+			name: "CV-26-000004",
+			docstatus: 1,
+			visit_datetime: "2026-11-01 13:00:00",
+			customer: "Pilot Customer 1",
+			customer_name: "Pilot Customer 1",
+			off_route: 0,
+			outcome: "Sale",
+			no_sale_reason: null,
+			sales_invoice: "MB-SINV-26-00004",
+			payment_entry: "ACC-PAY-2026-00007",
+			credit_notes: "MB-SRET-26-00002",
+			return_total: 1325,
+			credit_applied: 1325,
+			grand_total: 2517.5,
+			rounded_total: 2518,
+			total_collected: 1193,
 		},
 	],
 	get_customer_invoices: [{ name: "MB-SINV-26-00002", posting_date: "2026-11-01", grand_total: 1325 }],
@@ -393,11 +411,33 @@ describe("visit wizard (Phase 5b)", () => {
 		expect(priceCalls.length).toBeGreaterThan(0)
 	})
 
-	it("History offers the credit note reprint and shows returns", async () => {
-		const text = await render(boot(AGENT, trip("In Field")), "/history")
+	it("History shows each visit's prints only when the document exists, Print All in order", async () => {
+		const cards = {}
+		const text = await render(boot(AGENT, trip("In Field")), "/history", async (root) => {
+			for (const card of root.querySelectorAll(".card")) {
+				const name = (card.textContent.match(/CV-26-\d+/) || [])[0]
+				if (name) cards[name] = [...card.querySelectorAll("a[data-print]")].map((a) => [a.dataset.print, a.textContent.trim(), a.getAttribute("href")])
+			}
+		})
 		expect(problems).toEqual([])
-		expect(text).toContain("Credit note")
 		expect(text).toContain("returns")
+		const keys = (name) => cards[name].map(([key]) => key)
+		// sale only (invoice + receipt): bill, invoice, all, receipt
+		expect(keys("CV-26-000001")).toEqual(["bill", "invoice", "all", "receipt"])
+		// shop closed: nothing to print
+		expect(keys("CV-26-000002")).toEqual([])
+		// return only: bill, return note, all
+		expect(keys("CV-26-000003")).toEqual(["bill", "note:MB-SRET-26-00001", "all"])
+		// sale + return: bill (primary), invoice, return note, all, receipt
+		expect(keys("CV-26-000004")).toEqual(["bill", "invoice", "note:MB-SRET-26-00002", "all", "receipt"])
+		const [bill, invoice, note, all] = cards["CV-26-000004"]
+		expect(bill[1]).toBe("Print Bill")
+		expect(bill[2]).toContain("doctype=Customer+Visit&name=CV-26-000004&format=Mobile+Visit+Bill")
+		expect(invoice[1]).toBe("Print Invoice")
+		expect(invoice[2]).toContain("name=MB-SINV-26-00004&format=Mobile+Invoice+4in")
+		expect(note[1]).toBe("Print Return Note")
+		expect(note[2]).toContain("name=MB-SRET-26-00002&format=Mobile+Return+Note")
+		expect(all).toEqual(["all", "Print All", "/mobile-sales-print?visit=CV-26-000004"])
 	})
 })
 
@@ -528,7 +568,10 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 				return_reason: "Damaged", condition: "Damaged", remarks: null },
 		])
 		expect(payload.sale_items).toEqual([{ item_code: "ARCP003", qty: 1, discount_percentage: 0, discount_amount: 0 }])
-		expect(seen.done).toContain("Print credit note MB-SRET-26-00001")
+		expect(seen.done).toContain("Print Bill")
+		expect(seen.done).toContain("Print Invoice")
+		expect(seen.done).toContain("Print Return Note")
+		expect(seen.done).toContain("Print All")
 		expect(seen.done).toContain("Return credit")
 	})
 	const toReturns = async (root) => {
@@ -654,5 +697,20 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 		expect(seen.dialog).toContain("1,193.00")
 		expect(seen.focused).toBe("Cancel")
 		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
+	})
+})
+
+describe("visit prints (v0.6.1)", () => {
+	it("lists bill → invoice → each return note, Print All only for more than one document", () => {
+		const keys = (visit) => visitPrints(visit).map((p) => p.key)
+		expect(keys({ name: "CV-1", outcome: "No Sale" })).toEqual([])
+		expect(keys({ name: "CV-2", sales_invoice: "SI-1" })).toEqual(["bill", "invoice", "all"])
+		expect(keys({ name: "CV-3", credit_notes: "RN-1" })).toEqual(["bill", "note:RN-1", "all"])
+		expect(keys({ name: "CV-4", payment_entry: "PE-1" })).toEqual(["bill"]) // collection only: the bill alone
+		const two = visitPrints({ name: "CV-5", sales_invoice: "SI-1", credit_notes: "RN-1, RN-2" })
+		expect(two.map((p) => p.key)).toEqual(["bill", "invoice", "note:RN-1", "note:RN-2", "all"])
+		expect(two.map((p) => p.label)).toEqual(["Print Bill", "Print Invoice", "Print Return Note RN-1", "Print Return Note RN-2", "Print All"])
+		expect(two.filter((p) => p.primary).map((p) => p.key)).toEqual(["bill"])
+		expect(two.at(-1).url).toBe("/mobile-sales-print?visit=CV-5")
 	})
 })

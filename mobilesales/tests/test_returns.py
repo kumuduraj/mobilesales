@@ -3,10 +3,14 @@ return warehouse), credit set-off against the returned invoice / today's sale / 
 cancel chain, customer-return warehouse guards and the phone API. Flows run as the real agent, cancel as
 the real supervisor (CLAUDE.md rule 13)."""
 
+import re
 from unittest.mock import patch
 
 import frappe
 from frappe.utils import flt, now_datetime, nowdate
+from frappe.website.serve import get_response
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
@@ -461,12 +465,139 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 			note_html = amounts(frappe.get_print("Sales Invoice", note.name, print_format="Mobile Invoice 4in"))
 		self.assertRegex(invoice_html, r"Invoice discount \(5%\)\s*-\D*20\.00")
 		self.assertNotRegex(invoice_html, r"Invoice discount \(5%\)\s*-[^\d]*-")  # one minus sign, not "-Rs -20.00"
-		self.assertRegex(invoice_html, r"Return credit applied\s*-\D*200\.00")
+		self.assertRegex(invoice_html, rf"Return credit \({note.name}\)\s*-\D*200\.00")
 		self.assertRegex(invoice_html, r"Paid \(cash\)\s*\D*180\.00")
 		self.assertNotRegex(invoice_html, r"Paid \(cash\) \D*380")
 		self.assertRegex(note_html, rf"Credit applied to {si.name}\s*\D*200\.00")
 		self.assertRegex(note_html, r"Credit left on account\s*\D*0\.00")
 		self.assertNotIn("Paid (cash)", note_html)
+
+	# prints (v0.6.1): Mobile Visit Bill, Mobile Invoice 4in, Mobile Return Note
+
+	def printed(self, doctype, name, print_format, user=None):
+		with as_user(user or self.agent_a.user):
+			return " ".join(frappe.utils.strip_html(frappe.get_print(doctype, name, print_format=print_format)).split())
+
+	def bill(self, visit):
+		return self.printed("Customer Visit", visit.name, "Mobile Visit Bill")
+
+	def invoice(self, name):
+		return self.printed("Sales Invoice", name, "Mobile Invoice 4in")
+
+	def note(self, name):
+		return self.printed("Sales Invoice", name, "Mobile Return Note")
+
+	def test_prints_sale_only(self):
+		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 2}])
+		bill = self.bill(visit)
+		for text in ("BILL", f"SALES · {visit.sales_invoice}", "Sales total", "Net payable", "Customer", "Agent", "_MS Test Agent A"):
+			self.assertIn(text, bill)
+		self.assertRegex(bill, r"Paid \(cash\)\s*\D*200\.00")
+		self.assertRegex(bill, r"Balance\s*\D*0\.00")
+		self.assertNotIn("RETURNS", bill)
+		self.assertNotIn("Return credit", bill)
+		invoice = self.invoice(visit.sales_invoice)
+		self.assertRegex(invoice, r"Paid \(cash\)\s*\D*200\.00")
+		self.assertNotIn("Return credit", invoice)
+		self.assertIn(f"{visit.sales_invoice} is not a return note.", self.note(visit.sales_invoice))
+
+	def test_prints_sale_and_return_with_split_set_off(self):
+		self.set_setting("allow_credit_sales", 1)
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "credit_limit_per_invoice", 1000)
+		earlier = self.visit(items=[{"item_code": self.plain_item, "qty": 2}], collect=150)  # 50 left open
+		visit = self.visit(
+			items=[{"item_code": self.plain_item, "qty": 1}],
+			return_items=[self.ret(self.plain_item, 1, earlier.sales_invoice, reason="Damaged", condition="Damaged", remarks="torn")],
+		)
+		note = self.credit_note(visit).name
+		sale = visit.sales_invoice
+		self.assertEqual((visit.credit_applied, visit.total_collected), (100, 50))
+
+		bill = self.bill(visit)
+		for pattern in (
+			rf"SALES · {sale}", rf"RETURNS · {note}", rf"against {earlier.sales_invoice} · Damaged · Damaged · torn",
+			r"-\D*100\.00", r"Return total\s*-\D*100\.00",
+			rf"Return credit applied {earlier.sales_invoice}\s*-\D*50\.00", rf"Return credit applied {sale}\s*-\D*50\.00",
+			r"Credit left on account\s*\D*0\.00", r"Net payable\s*\D*50\.00", r"Paid \(cash\)\s*\D*50\.00",
+			r"Balance\s*\D*0\.00", r"Previous Outstanding\s*\D*0\.00", r"Total Due\s*\D*0\.00",
+		):  # fmt: skip
+			self.assertRegex(bill, pattern)
+		self.assertLess(bill.index("SALES"), bill.index("RETURNS"))
+
+		# the set-off is never cash, on either invoice it paid
+		invoice = self.invoice(sale)
+		self.assertRegex(invoice, rf"Return credit \({note}\)\s*-\D*50\.00")
+		self.assertRegex(invoice, r"Paid \(cash\)\s*\D*50\.00")
+		self.assertNotRegex(invoice, r"Paid \(cash\)\s*\D*100\.00")
+		earlier_print = self.invoice(earlier.sales_invoice)
+		self.assertRegex(earlier_print, rf"Return credit \({note}\)\s*-\D*50\.00")
+		self.assertRegex(earlier_print, r"Paid \(cash\)\s*\D*150\.00")
+
+		returned = self.note(note)
+		for pattern in (
+			r"RETURN NOTE", rf"Against\s*{earlier.sales_invoice}", rf"Visit\s*{visit.name}", r"Damaged · Damaged · torn",
+			r"Total credit\s*\D*100\.00", rf"Credit applied to {earlier.sales_invoice}\s*\D*50\.00",
+			rf"Credit applied to {sale}\s*\D*50\.00", r"Credit left on account\s*\D*0\.00\s*Customer\s*Agent",
+		):  # fmt: skip
+			self.assertRegex(returned, pattern)
+		self.assertNotIn("Paid (cash)", returned)
+
+		# Print All (/mobile-sales-print): bill → invoice → return note, as the agent; never for another agent
+		status, html = self.render_print_all(visit.name, self.agent_a.user)
+		self.assertEqual(status, 200, html[:1500])
+		self.assertEqual(
+			re.findall(r'data-format="([^"]+)"', html), ["Mobile Visit Bill", "Mobile Invoice 4in", "Mobile Return Note"]
+		)
+		self.assertEqual(re.findall(r'data-name="([^"]+)"', html), [visit.name, sale, note])
+		self.assertIn('<div class="mi4">', html)  # rendered, not escaped
+		self.assertIn("window.print()", html)
+		status, html = self.render_print_all(visit.name, self.users.supervisor)
+		self.assertEqual(status, 200, html[:1500])
+		status, _html = self.render_print_all(visit.name, self.agent_b.user)
+		self.assertNotEqual(status, 200)
+
+	def render_print_all(self, visit, user):
+		"""Full /mobile-sales-print render (context + template) as a logged-in user (rule 17)."""
+		if hasattr(frappe.local, "request"):
+			self.addCleanup(setattr, frappe.local, "request", frappe.local.request)
+		else:  # no request outside a web request: put it back that way, or later get_print() calls break
+			self.addCleanup(delattr, frappe.local, "request")
+		frappe.local.request = Request(EnvironBuilder(path="/mobile-sales-print", query_string=f"visit={visit}", base_url="http://localhost").get_environ())
+		with as_user(user), patch.object(frappe.db, "commit"):
+			frappe.local.form_dict = frappe._dict(visit=visit)  # set_user resets form_dict: a request's query
+			response = get_response("mobile-sales-print")
+		return response.status_code, response.get_data(as_text=True)
+
+	def test_prints_return_only_with_credit_left(self):
+		earlier = self.visit(items=[{"item_code": self.plain_item, "qty": 1}])  # paid: nothing to set off
+		visit = self.visit(outcome="Return Only", return_items=[self.ret(self.plain_item, 1, earlier.sales_invoice)])
+		note = self.credit_note(visit).name
+		self.assertFalse(visit.credit_journal)
+		bill = self.bill(visit)
+		self.assertIn(f"RETURNS · {note}", bill)
+		self.assertRegex(bill, r"Credit left on account\s*\D*100\.00")
+		for text in ("SALES", "Net payable", "Return credit applied"):
+			self.assertNotIn(text, bill)
+		returned = self.note(note)
+		self.assertRegex(returned, r"Total credit\s*\D*100\.00")
+		self.assertRegex(returned, r"Credit left on account\s*\D*100\.00")
+		self.assertIn("Damaged · Resaleable", returned)
+		self.assertNotIn("Credit applied to", returned)
+		self.assertRegex(self.invoice(note), r"Credit left on account\s*\D*100\.00")
+
+	def test_prints_discounted_sale_with_rounding(self):
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "max_discount_pct", 10)
+		visit = self.visit(items=[{"item_code": self.plain_item, "qty": 1, "discount_amount": 0.5}], additional_discount_percentage=5)
+		si = frappe.get_doc("Sales Invoice", visit.sales_invoice)
+		self.assertEqual((si.additional_discount_percentage, si.grand_total), (5, 94.52))  # 99.50 - 5% (4.98)
+		rounded = bool(si.rounding_adjustment) and si.rounded_total != si.grand_total
+		for text in (self.bill(visit), self.invoice(si.name)):
+			self.assertIn("List", text)
+			self.assertIn("Disc. 0.50%", text)
+			self.assertRegex(text, r"Invoice discount \(5%\)\s*-\D*4\.98")
+			self.assertNotRegex(text, r"Invoice discount \(5%\)\s*-[^\d]*-")
+			self.assertEqual("Rounding adjustment" in text, rounded)
+			self.assertRegex(text, rf"Paid \(cash\)\s*\D*{flt(invoicing.payable_amount(si)):,.2f}")
 
 	def standard_invoice(self, rate):
 		si = frappe.get_doc(

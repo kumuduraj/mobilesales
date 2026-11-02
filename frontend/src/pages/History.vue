@@ -21,21 +21,7 @@
 				<span v-if="v.total_collected"> · {{ __("collected") }} {{ money(v.total_collected) }}</span>
 				<span v-if="v.return_total"> · {{ __("returns") }} {{ money(v.return_total) }}</span>
 			</div>
-			<div v-if="v.sales_invoice || v.payment_entry || v.credit_notes" class="mt-3 grid grid-cols-2 gap-2">
-				<a v-if="v.sales_invoice" class="btn-secondary min-h-[44px] text-sm" :href="printUrl('Sales Invoice', v.sales_invoice, 'Mobile Invoice 4in')" target="_blank">
-					{{ __("Invoice") }}
-				</a>
-				<a v-if="v.payment_entry" class="btn-secondary min-h-[44px] text-sm" :href="printUrl('Payment Entry', v.payment_entry, 'Mobile Collection Receipt')" target="_blank">
-					{{ __("Receipt") }}
-				</a>
-				<a
-					v-for="note in notes(v)"
-					:key="note"
-					class="btn-secondary min-h-[44px] text-sm"
-					:href="printUrl('Sales Invoice', note, 'Mobile Invoice 4in')"
-					target="_blank"
-				>{{ __("Credit note") }}</a>
-			</div>
+			<VisitPrints class="mt-3" :visit="v" />
 		</div>
 		<p v-if="message" class="text-sm text-red-700">{{ message }}</p>
 	</div>
@@ -44,14 +30,14 @@
 <script setup>
 import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
-import { money, printUrl, session } from "../state"
+import VisitPrints from "../components/VisitPrints.vue"
+import { money, session } from "../state"
 
 const trip = computed(() => session.ctx?.trip)
 const visits = ref([])
 const loading = ref(false)
 const message = ref("")
 const time = (value) => (value || "").slice(11, 16)
-const notes = (visit) => (visit.credit_notes || "").split(",").map((n) => n.trim()).filter(Boolean)
 
 onMounted(async () => {
 	if (!trip.value) return
