@@ -395,6 +395,7 @@ describe("visit wizard (Phase 5b)", () => {
 			for (let i = 0; i < 3; i++) await settle()
 			choose(card.querySelectorAll("select")[1], "row-1")
 			type(card.querySelector("input[type=number]"), "1")
+			choose(card.querySelectorAll("select")[2], "Damaged")
 			choose(card.querySelectorAll("select")[3], "Damaged")
 			await settle()
 			click(root, "+ Add return")
@@ -617,6 +618,7 @@ describe("returns step never drops a return (live run MTRIP-26-00005)", () => {
 				seen.tooMuch = text()
 				qtyInput.value = "1"
 				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Resaleable")
 				choose(form.querySelectorAll("select")[3], "Other")
 				await settle()
 				seen.other = text()
@@ -752,6 +754,71 @@ describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () 
 		])
 	})
 
+	it("reason and condition start empty on every new return line; Add waits for both", async () => {
+		const originalContext = API.get_context
+		API.get_context = boot(AGENT, trip("In Field")).context
+		const lines = []
+		try {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				const form = await toReturns(root)
+				const selects = () => form.querySelectorAll("select")
+				const condition = () => form.querySelector('select[aria-label="Condition"]')
+				const reason = () => form.querySelector('select[aria-label="Reason"]')
+				const state = () => ({
+					condition: [condition().value, condition().selectedOptions[0]?.textContent.trim()],
+					reason: [reason().value, reason().selectedOptions[0]?.textContent.trim()],
+					addDisabled: button(root, "+ Add return").disabled,
+					text: root.textContent.replace(/\s+/g, " "),
+				})
+				const fillLine = async () => {
+					choose(selects()[0], "MB-SINV-26-00002")
+					await settleMore()
+					choose(selects()[1], "row-1")
+					const qtyInput = form.querySelector("input[type=number]")
+					qtyInput.value = "1"
+					qtyInput.dispatchEvent(new Event("input"))
+					await settle()
+				}
+				for (let line = 0; line < 2; line++) {
+					const seen = { start: state() }
+					await fillLine()
+					seen.filled = state() // item and qty only
+					choose(condition(), "Damaged")
+					await settle()
+					seen.conditionOnly = state()
+					choose(condition(), "")
+					choose(reason(), "Damaged")
+					await settle()
+					seen.reasonOnly = state()
+					choose(condition(), "Damaged")
+					await settle()
+					seen.both = state()
+					button(root, "+ Add return").click()
+					await settleMore()
+					lines.push(seen)
+				}
+				lines.push({ after: state() })
+			})
+		} finally {
+			API.get_context = originalContext
+		}
+		expect(problems).toEqual([])
+		for (const seen of lines.slice(0, 2)) {
+			expect(seen.start.condition).toEqual(["", "Choose condition…"])
+			expect(seen.start.reason).toEqual(["", "Choose reason…"])
+			expect(seen.filled.addDisabled).toBe(true)
+			expect(seen.conditionOnly).toMatchObject({ addDisabled: true, reason: ["", "Choose reason…"] })
+			expect(seen.conditionOnly.text).toContain("Choose a reason.")
+			expect(seen.reasonOnly.addDisabled).toBe(true)
+			expect(seen.reasonOnly.text).toContain("Choose the condition.")
+			expect(seen.both.addDisabled).toBe(false)
+		}
+		// the second line did not inherit the first line's reason / condition, and neither does a third
+		expect(lines[2].after.condition).toEqual(["", "Choose condition…"])
+		expect(lines[2].after.reason).toEqual(["", "Choose reason…"])
+		expect(lines[2].after.text.match(/Reason: Damaged/g)).toHaveLength(2)
+	})
+
 	it("sets Collect Now to 0 and says why when the return credit covers the sale", async () => {
 		const originalContext = API.get_context
 		const originalPrice = API.price_cart
@@ -769,6 +836,7 @@ describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () 
 				const qtyInput = form.querySelector("input[type=number]")
 				qtyInput.value = "1"
 				qtyInput.dispatchEvent(new Event("input"))
+				choose(form.querySelectorAll("select")[2], "Damaged")
 				choose(form.querySelectorAll("select")[3], "Damaged")
 				await settle()
 				button(root, "+ Add return").click()

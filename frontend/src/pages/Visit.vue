@@ -180,12 +180,13 @@
 				<div class="grid grid-cols-2 gap-2">
 					<input v-model.number="newReturn.qty" class="field" type="number" inputmode="decimal" min="0" :placeholder="__('Qty')" />
 					<select v-model="newReturn.condition" class="field" :aria-label="__('Condition')">
+						<option value="" disabled>{{ __("Choose condition…") }}</option>
 						<option value="Resaleable">{{ __("Resaleable") }}</option>
 						<option value="Damaged">{{ __("Damaged") }}</option>
 					</select>
 				</div>
-				<select v-model="newReturn.return_reason" class="field">
-					<option value="">{{ __("Reason…") }}</option>
+				<select v-model="newReturn.return_reason" class="field" :aria-label="__('Reason')">
+					<option value="" disabled>{{ __("Choose reason…") }}</option>
 					<option v-for="r in returnReasons" :key="r.name" :value="r.name">{{ r.name }}</option>
 				</select>
 				<input v-model.trim="newReturn.remarks" class="field" :placeholder="returnRemarkRequired ? __('Remarks *') : __('Remarks (optional)')" />
@@ -384,7 +385,8 @@ const customerInvoices = ref([])
 const returnLines = ref([])
 const itemQuery = ref("")
 const itemResults = ref([])
-const newReturn = reactive({ against_invoice: "", sales_invoice_item: "", item_code: "", qty: null, condition: "Resaleable", return_reason: "", remarks: "" })
+// Reason and condition start empty for every new return line: no default, nothing kept from the line before.
+const newReturn = reactive({ against_invoice: "", sales_invoice_item: "", item_code: "", qty: null, condition: "", return_reason: "", remarks: "" })
 const priced = ref(null)
 const priceError = ref("")
 const form = reactive({
@@ -486,6 +488,7 @@ const returnMissing = computed(() => {
 	if (!(Number(newReturn.qty) > 0)) return __("Enter a quantity above 0.")
 	if (chosenLine.value && Number(newReturn.qty) > Number(chosenLine.value.returnable_qty))
 		return __("At most {0} {1} can be returned from this invoice.", [qty(chosenLine.value.returnable_qty), chosenLine.value.uom])
+	if (!newReturn.condition) return __("Choose the condition.")
 	if (!newReturn.return_reason) return __("Choose a reason.")
 	if (returnRemarkRequired.value && !newReturn.remarks) return __("Remarks required for reason {0}.", [newReturn.return_reason])
 	return ""
@@ -563,7 +566,7 @@ function addReturn() {
 }
 
 function clearReturn() {
-	Object.assign(newReturn, { against_invoice: "", sales_invoice_item: "", item_code: "", qty: null, condition: "Resaleable", return_reason: "", remarks: "" })
+	Object.assign(newReturn, { against_invoice: "", sales_invoice_item: "", item_code: "", qty: null, condition: "", return_reason: "", remarks: "" })
 	returnLines.value = []
 	itemQuery.value = ""
 	itemResults.value = []

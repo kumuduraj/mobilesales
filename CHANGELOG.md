@@ -31,6 +31,9 @@
 - Collection: when the return credit covers the sale, Collect Now is set to the amount due (0), read-only,
   with "Return credit covers this invoice — nothing to collect."; Collect Now also drops to the due amount
   whenever the due falls below what was entered (no refused submit).
+- Return reason and condition start empty ("Choose reason…", "Choose condition…") on every new return line:
+  condition no longer defaults to Resaleable (CV-26-000008 was saved Resaleable), nothing is kept from the
+  line before, and "+ Add return" stays disabled until both are chosen.
 - Return lines show reason and condition as labelled badges (Damaged in red) with the remarks, on the
   Returns step and on Review.
 - Submit visit asks for confirmation with a summary: sale lines (qty, rate, line discount), invoice
