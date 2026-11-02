@@ -186,7 +186,15 @@ const API = {
 		denominations: [5000, 1000, 500, 100, 50, 20, 10, 5, 2, 1].map((denomination) => ({ denomination, count: 0, value: 0 })),
 	},
 	search_customers: [],
+	save_settlement: null, // set below: the draft as saved, with the server's warnings
+	submit_settlement_for_verification: null,
 }
+API.save_settlement = {
+	...API.get_settlement_draft,
+	name: "MSET-26-00003",
+	warnings: ["10 Kg Kochchi Chicken Meat will be recorded as MISSING", "Cash is SHORT by LKR 25.00"],
+}
+API.submit_settlement_for_verification = { ...API.save_settlement, workflow_state: "Pending Store", editable: false }
 
 const SCENARIOS = [
 	{ title: "agent with a Loaded trip", boot: boot(AGENT, trip("Loaded")), expect: "MTRIP-26-00003" },
@@ -383,5 +391,56 @@ describe("visit wizard (Phase 5b)", () => {
 		expect(problems).toEqual([])
 		expect(text).toContain("Credit note")
 		expect(text).toContain("returns")
+	})
+})
+
+describe("settlement screen", () => {
+	const settling = () => boot(AGENT, trip("Settling"))
+	const methodCalls = (method) => globalThis.fetch.mock.calls.filter(([url]) => String(url).endsWith(method)).length
+
+	it("is read-only after Submit for Verification (any state but Draft)", async () => {
+		const original = API.get_settlement_draft
+		API.get_settlement_draft = { ...original, name: "MSET-26-00003", workflow_state: "Pending Approval", editable: false,
+			stock_lines: [{ ...original.stock_lines[0], returned_qty: 0, damaged_qty: 0 }],
+			denominations: original.denominations.map((d) => ({ ...d, count: d.denomination === 1000 ? 1 : 0 })) }
+		let inputs = -1
+		let buttons = []
+		try {
+			await render(settling(), "/settlement", async (root) => {
+				inputs = root.querySelectorAll("main input, main select").length
+				buttons = [...root.querySelectorAll("main button")].map((b) => b.textContent.trim())
+			})
+		} finally {
+			API.get_settlement_draft = original
+		}
+		expect(problems).toEqual([])
+		expect(inputs).toBe(0)
+		expect(buttons).not.toContain("Submit for Verification")
+	})
+
+	it("confirms missing stock and cash variance before Submit for Verification, Cancel focused", async () => {
+		const seen = {}
+		await render(settling(), "/settlement", async (root) => {
+			;[...root.querySelectorAll("button")].find((b) => b.textContent.includes("Submit for Verification")).click()
+			for (let i = 0; i < 4; i++) await settle()
+			const dialog = root.querySelector("[role=dialog]")
+			seen.text = dialog?.textContent.replace(/\s+/g, " ")
+			seen.focused = document.activeElement?.textContent.trim()
+			;[...dialog.querySelectorAll("button")].find((b) => b.textContent.trim() === "Cancel").click()
+			await settle()
+			seen.afterCancel = { dialog: !!root.querySelector("[role=dialog]"), submits: methodCalls("submit_settlement_for_verification") }
+			;[...root.querySelectorAll("button")].find((b) => b.textContent.includes("Submit for Verification")).click()
+			for (let i = 0; i < 4; i++) await settle()
+			;[...root.querySelector("[role=dialog]").querySelectorAll("button")].find((b) => b.textContent.trim() === "Continue").click()
+			for (let i = 0; i < 4; i++) await settle()
+			seen.afterContinue = { submits: methodCalls("submit_settlement_for_verification"), text: root.textContent }
+		})
+		expect(problems).toEqual([])
+		expect(seen.text).toContain("10 Kg Kochchi Chicken Meat will be recorded as MISSING")
+		expect(seen.text).toContain("Cash is SHORT by LKR 25.00")
+		expect(seen.focused).toBe("Cancel")
+		expect(seen.afterCancel).toEqual({ dialog: false, submits: 0 })
+		expect(seen.afterContinue.submits).toBe(1)
+		expect(seen.afterContinue.text).toContain("Submitted for verification")
 	})
 })

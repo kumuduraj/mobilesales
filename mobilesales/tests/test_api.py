@@ -328,8 +328,15 @@ class TestMobileAPI(MobileSalesTestCase):
 			draft = api.get_settlement_draft(trip.name)
 			self.assertEqual((draft["name"], draft["editable"], draft["stock_lines"][0]["expected_balance"]), (None, True, 3))
 			counts = [{"denomination": 100, "count": 2}]
+			# Returned 0 writes the whole van off: the app gets the warnings to confirm first
+			careless = api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 0}], "denominations": [{"denomination": 100, "count": 1}]})
+			item_name = frappe.db.get_value("Item", self.plain_item, "item_name")
+			self.assertEqual(len(careless["warnings"]), 2)
+			self.assertIn(f"3 Nos {item_name} will be recorded as MISSING", careless["warnings"][0])
+			self.assertIn("Cash is SHORT by", careless["warnings"][1])
 			saved = api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 3}], "denominations": counts})
 			self.assertTrue(saved["name"])
+			self.assertEqual(saved["warnings"], [])
 			self.assertEqual((saved["cash_handed_over"], saved["cash_variance"], saved["workflow_state"]), (200, 0, "Draft"))
 			submitted = api.submit_settlement_for_verification(saved["name"])
 			self.assertEqual((submitted["workflow_state"], submitted["editable"]), ("Pending Store", False))

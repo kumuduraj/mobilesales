@@ -734,7 +734,27 @@ def _settlement_payload(doc) -> dict:
 	data["workflow_state"] = doc.get("workflow_state") or "Draft"
 	data["docstatus"] = doc.docstatus
 	data["editable"] = bool(doc.is_new() or (doc.docstatus == 0 and data["workflow_state"] == "Draft"))
+	data["warnings"] = settlement_warnings(doc)
 	return data
+
+
+def settlement_warnings(doc) -> list[str]:
+	"""What Submit for Verification will record against the agent: shown in a confirm dialog first."""
+	warnings = []
+	for row in doc.stock_lines:
+		if flt(row.missing_qty) > 0:
+			warnings.append(
+				_("{0} {1} {2} will be recorded as MISSING").format(
+					frappe.format(flt(row.missing_qty), "Float"), row.uom, row.item_name or row.item_code
+				)
+			)
+	variance = flt(doc.cash_variance, 2)
+	currency = frappe.get_cached_value("Company", doc.company, "default_currency") if doc.company else None
+	if variance < 0:
+		warnings.append(_("Cash is SHORT by {0}").format(frappe.format(-variance, {"fieldtype": "Currency", "options": currency})))
+	elif variance > 0:
+		warnings.append(_("Cash is OVER by {0}").format(frappe.format(variance, {"fieldtype": "Currency", "options": currency})))
+	return warnings
 
 
 @frappe.whitelist()
