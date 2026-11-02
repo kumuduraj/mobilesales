@@ -8,9 +8,12 @@
 					<div class="font-semibold">{{ v.customer_name }}</div>
 					<div class="text-xs text-gray-500">{{ v.name }} · {{ time(v.visit_datetime) }}</div>
 				</div>
-				<span class="rounded-full px-2 py-0.5 text-xs" :class="v.docstatus === 1 ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'">
-					{{ v.docstatus === 1 ? __(v.outcome) : __("Draft") }}
-				</span>
+				<div class="flex flex-col items-end gap-1">
+					<span class="rounded-full px-2 py-0.5 text-xs" :class="v.docstatus === 1 ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'">
+						{{ v.docstatus === 1 ? __(v.outcome) : __("Draft") }}
+					</span>
+					<span v-if="v.off_route" class="rounded-full bg-sky-100 px-2 py-0.5 text-xs text-sky-800">{{ __("Off route") }}</span>
+				</div>
 			</div>
 			<div class="mt-2 text-sm text-gray-600">
 				<span v-if="v.no_sale_reason">{{ v.no_sale_reason }}</span>

@@ -82,7 +82,7 @@
 				>{{ __(o) }}</button>
 			</div>
 			<div v-if="isNoSale" class="card space-y-3">
-				<div>
+				<div v-if="form.outcome === 'No Sale'">
 					<label class="label">{{ __("Reason") }} *</label>
 					<select v-model="form.no_sale_reason" class="field">
 						<option value="">{{ __("Choose…") }}</option>
@@ -152,7 +152,7 @@
 		<!-- Review -->
 		<div v-else-if="step === 'review'" class="card space-y-2 text-sm">
 			<div class="flex justify-between"><span class="text-gray-500">{{ __("Outcome") }}</span><span class="font-semibold">{{ __(form.outcome) }}</span></div>
-			<div v-if="isNoSale" class="flex justify-between"><span class="text-gray-500">{{ __("Reason") }}</span><span>{{ form.no_sale_reason }}</span></div>
+			<div v-if="form.outcome === 'No Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Reason") }}</span><span>{{ form.no_sale_reason }}</span></div>
 			<div v-if="form.outcome === 'Sale'" class="flex justify-between"><span class="text-gray-500">{{ __("Invoice total") }}</span><span>{{ money(priced?.rounded_total) }}</span></div>
 			<div class="flex justify-between"><span class="text-gray-500">{{ __("Collected") }}</span><span>{{ money(totalCollected) }}</span></div>
 			<div v-if="form.update_customer" class="text-gray-600">{{ __("Customer details will be updated.") }}</div>
@@ -248,7 +248,10 @@ const form = reactive({
 })
 
 const isNoSale = computed(() => ["No Sale", "Shop Closed"].includes(form.outcome))
-const remarkRequired = computed(() => reasons.value.find((r) => r.name === form.no_sale_reason)?.requires_remark)
+// Shop Closed needs no reason and its remarks are optional; No Sale needs a reason (and remarks if the reason says so).
+const remarkRequired = computed(
+	() => form.outcome === "No Sale" && !!reasons.value.find((r) => r.name === form.no_sale_reason)?.requires_remark
+)
 const steps = computed(() => {
 	const list = ["checkin", "details", "shelf", "outcome"]
 	if (["Sale", "Collection Only"].includes(form.outcome)) list.push("collection")
@@ -283,6 +286,7 @@ const canNext = computed(() => {
 	if (step.value === "checkin") return !requireGeo.value || !!form.latitude
 	if (step.value === "outcome") {
 		if (!form.outcome) return false
+		if (form.outcome === "Shop Closed") return true
 		if (isNoSale.value) return !!form.no_sale_reason && (!remarkRequired.value || !!form.remarks)
 		if (form.outcome === "Sale") return !!priced.value && cartItems.value.length > 0 && !priceError.value && priced.value.lines.every((l) => l.enough_stock)
 	}
@@ -375,7 +379,7 @@ async function submit() {
 		outcome: form.outcome,
 		latitude: form.latitude,
 		longitude: form.longitude,
-		no_sale_reason: isNoSale.value ? form.no_sale_reason : null,
+		no_sale_reason: form.outcome === "No Sale" ? form.no_sale_reason : null,
 		remarks: form.remarks || null,
 		update_customer: form.update_customer ? 1 : 0,
 		sale_items: form.outcome === "Sale" ? cartItems.value : [],

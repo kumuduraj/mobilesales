@@ -4,8 +4,8 @@ import { precacheAndRoute } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
 import { NetworkFirst } from "workbox-strategies"
 
-// Bump CACHE_VERSION when installed apps must drop everything cached before (v2: blank-screen fix, v0.5.0).
-const CACHE_VERSION = "v2"
+// Bump CACHE_VERSION when installed apps must drop everything cached before (v3: "Mobile Sales" name, v0.5.0).
+const CACHE_VERSION = "v3"
 const SHELL_CACHE = `mobile-sales-shell-${CACHE_VERSION}`
 setCacheNameDetails({ prefix: "mobile-sales", suffix: CACHE_VERSION })
 

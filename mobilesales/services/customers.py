@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
 from frappe.contacts.doctype.contact.contact import get_default_contact
-from frappe.utils import flt
+from frappe.utils import cint, flt
 
 from mobilesales.services import customer_update
 
@@ -113,20 +113,26 @@ def quick_create(data, settings) -> dict:
 	if bool(line1) != bool(city):
 		frappe.throw(_("Enter both address line 1 and city, or neither."))
 
+	customer_group = data.customer_group or settings.default_customer_group
+	territory = data.territory or settings.default_territory
+	if not (customer_group and territory):
+		frappe.throw(_("Set Default Customer Group and Default Territory in Mobile Sales Settings first."))
+	_require_leaf("Customer Group", customer_group)
+	_require_leaf("Territory", territory)
+	if data.route and not frappe.db.get_value("Mobile Route", data.route, "is_active"):
+		frappe.throw(_("Mobile Route {0} is not an active route.").format(frappe.bold(data.route)))
+
 	existing = find_by_mobile(mobile)
 	if existing:
 		return {"name": existing, "customer_name": frappe.db.get_value("Customer", existing, "customer_name"), "existing": True}
-
-	if not (settings.default_customer_group and settings.default_territory):
-		frappe.throw(_("Set Default Customer Group and Default Territory in Mobile Sales Settings first."))
 
 	customer = frappe.get_doc(
 		{
 			"doctype": "Customer",
 			"customer_name": name,
 			"customer_type": "Company",
-			"customer_group": settings.default_customer_group,
-			"territory": settings.default_territory,
+			"customer_group": customer_group,
+			"territory": territory,
 		}
 	)
 	customer.flags.ignore_permissions = True
@@ -142,4 +148,36 @@ def quick_create(data, settings) -> dict:
 		visit_like = frappe._dict(customer=customer.name, company=settings.company)
 		rows = [frappe._dict(field_key=k, new_value=v) for k, v in values.items()]
 		customer_update.apply_changes(visit_like, rows)
-	return {"name": customer.name, "customer_name": customer.customer_name, "existing": False}
+	if data.route:
+		add_to_route(data.route, customer.name)
+	return {"name": customer.name, "customer_name": customer.customer_name, "existing": False, "route": data.route or None}
+
+
+def add_to_route(route, customer):
+	"""Append the customer at the end of the route (agents have read only on Mobile Route)."""
+	doc = frappe.get_doc("Mobile Route", route)
+	if any(row.customer == customer for row in doc.customers):
+		return
+	last = max((cint(row.sequence) for row in doc.customers), default=0)
+	doc.append("customers", {"customer": customer, "sequence": last + 1})
+	doc.flags.ignore_permissions = True
+	doc.save()
+
+
+def form_options(settings) -> dict:
+	"""Pickers of the new-customer form: leaf customer groups and territories, active routes, defaults."""
+	return {
+		"customer_groups": frappe.get_all("Customer Group", filters={"is_group": 0}, pluck="name", order_by="name asc"),
+		"territories": frappe.get_all("Territory", filters={"is_group": 0}, pluck="name", order_by="name asc"),
+		"routes": frappe.get_all("Mobile Route", filters={"is_active": 1}, pluck="name", order_by="name asc"),
+		"default_customer_group": settings.default_customer_group,
+		"default_territory": settings.default_territory,
+	}
+
+
+def _require_leaf(doctype, name):
+	is_group = frappe.db.get_value(doctype, name, "is_group")
+	if is_group is None:
+		frappe.throw(_("{0} {1} not found.").format(_(doctype), frappe.bold(name)))
+	if is_group:
+		frappe.throw(_("{0} {1} is a group; choose one below it.").format(_(doctype), frappe.bold(name)))

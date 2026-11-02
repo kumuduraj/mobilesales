@@ -26,8 +26,8 @@ export default defineConfig({
 			},
 			manifest: {
 				name: "Mobile Sales",
-				short_name: "Van Sales",
-				description: "Van sales: visits, invoices and collections",
+				short_name: "Mobile Sales",
+				description: "Mobile sales: visits, invoices and collections",
 				start_url: "/mobile-sales",
 				scope: "/mobile-sales",
 				display: "standalone",

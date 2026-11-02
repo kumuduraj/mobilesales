@@ -17,7 +17,7 @@ def get_visit_context(visit) -> tuple[frappe._dict, frappe._dict]:
 	trip = frappe.db.get_value(
 		"Mobile Trip",
 		visit.mobile_trip,
-		["name", "agent", "company", "van_warehouse", "trip_date", "status", "docstatus"],
+		["name", "agent", "company", "van_warehouse", "route", "trip_date", "status", "docstatus"],
 		as_dict=True,
 	)
 	if not trip:

@@ -25,6 +25,7 @@ def validate_visit(visit):
 	visit.client_ref = (visit.client_ref or "").strip() or None  # unique: empty must be NULL
 	visit.agent = trip.agent
 	visit.company = trip.company
+	visit.off_route = int(not is_route_customer(trip.route, visit.customer))
 
 	if trip.docstatus != 1 or trip.status != "In Field":
 		frappe.throw(
@@ -59,9 +60,11 @@ def validate_visit(visit):
 
 def validate_outcome(visit):
 	if visit.outcome in NO_SALE_OUTCOMES:
-		if not visit.no_sale_reason:
+		if visit.outcome == "Shop Closed":
+			visit.no_sale_reason = None  # no reason for a closed shop; remarks stay optional
+		elif not visit.no_sale_reason:
 			frappe.throw(_("No Sale Reason is required for outcome {0}.").format(_(visit.outcome)))
-		if frappe.db.get_value("Visit No Sale Reason", visit.no_sale_reason, "requires_remark") and not (
+		elif frappe.db.get_value("Visit No Sale Reason", visit.no_sale_reason, "requires_remark") and not (
 			visit.remarks or ""
 		).strip():
 			frappe.throw(_("Remarks are required for reason {0}.").format(frappe.bold(visit.no_sale_reason)))
@@ -211,6 +214,14 @@ def on_cancel(visit):
 
 
 # Helpers
+
+
+def is_route_customer(route, customer) -> bool:
+	"""Agents may visit any customer; a visit to one not on the trip's route is flagged off route."""
+	return bool(
+		route
+		and frappe.db.exists("Mobile Route Customer", {"parent": route, "parenttype": "Mobile Route", "customer": customer})
+	)
 
 
 def require_agent_or_supervisor(agent):

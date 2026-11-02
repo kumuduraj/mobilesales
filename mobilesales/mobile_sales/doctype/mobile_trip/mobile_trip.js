@@ -33,6 +33,14 @@ frappe.ui.form.on("Mobile Trip", {
 				)
 			);
 		}
+		if (frm.doc.status === "Settling" && (is_agent || is_supervisor)) {
+			frm.add_custom_button(__("Reopen Trip"), () =>
+				frappe.confirm(
+					__("Reopen this trip (back to In Field)? A draft settlement is deleted."),
+					() => run_action(frm, "reopen_trip")
+				)
+			);
+		}
 		if (["Loaded", "In Field"].includes(frm.doc.status) && can_top_up) {
 			frm.add_custom_button(__("Top-up Load"), () => show_top_up_dialog(frm));
 		}
@@ -65,6 +73,37 @@ frappe.ui.form.on("Mobile Trip", {
 		if (frm.doc.status && frm.doc.docstatus > 0) {
 			frm.page.set_indicator(__(frm.doc.status), colors[frm.doc.status] || "gray");
 		}
+	},
+});
+
+frappe.ui.form.on("Mobile Trip Load Item", {
+	item_code(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.item_code) return;
+		frappe.db.get_value("Item", row.item_code, "stock_uom").then((r) => {
+			const stock_uom = r.message && r.message.stock_uom;
+			if (!stock_uom) return;
+			frappe.model.set_value(cdt, cdn, { uom: stock_uom, conversion_factor: 1 });
+		});
+	},
+	uom(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row.item_code || !row.uom) return;
+		frappe.call({
+			method: "erpnext.stock.get_item_details.get_conversion_factor",
+			args: { item_code: row.item_code, uom: row.uom },
+			callback(r) {
+				if (r.message) frappe.model.set_value(cdt, cdn, "conversion_factor", r.message.conversion_factor);
+			},
+		});
+	},
+	conversion_factor(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		frappe.model.set_value(cdt, cdn, "stock_qty", flt(row.qty) * flt(row.conversion_factor));
+	},
+	qty(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		frappe.model.set_value(cdt, cdn, "stock_qty", flt(row.qty) * flt(row.conversion_factor));
 	},
 });
 
@@ -134,6 +173,14 @@ function show_top_up_dialog(frm) {
 						in_list_view: 1,
 						reqd: 1,
 						get_query: () => ({ filters: { is_stock_item: 1, disabled: 0 } }),
+						onchange: function () {
+							const item_code = this.get_value();
+							const uom_field = this.grid_row.on_grid_fields_dict.uom;
+							if (!item_code || !uom_field) return;
+							frappe.db.get_value("Item", item_code, "stock_uom").then((r) => {
+								if (r.message && r.message.stock_uom) uom_field.set_value(r.message.stock_uom);
+							});
+						},
 					},
 					{
 						fieldname: "uom",

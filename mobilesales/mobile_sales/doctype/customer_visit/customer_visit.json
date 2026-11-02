@@ -13,6 +13,7 @@
   "column_break_header",
   "customer",
   "customer_name",
+  "off_route",
   "visit_datetime",
   "outcome",
   "no_sale_reason",
@@ -123,6 +124,16 @@
    "in_list_view": 1
   },
   {
+   "default": "0",
+   "description": "Customer is not on the trip's route",
+   "fieldname": "off_route",
+   "fieldtype": "Check",
+   "label": "Off Route",
+   "read_only": 1,
+   "no_copy": 1,
+   "in_standard_filter": 1
+  },
+  {
    "fieldname": "visit_datetime",
    "fieldtype": "Datetime",
    "label": "Visit Date Time",
@@ -144,8 +155,8 @@
    "fieldtype": "Link",
    "label": "No Sale Reason",
    "options": "Visit No Sale Reason",
-   "depends_on": "eval:in_list(['No Sale','Shop Closed'], doc.outcome)",
-   "mandatory_depends_on": "eval:in_list(['No Sale','Shop Closed'], doc.outcome)"
+   "depends_on": "eval:doc.outcome=='No Sale'",
+   "mandatory_depends_on": "eval:doc.outcome=='No Sale'"
   },
   {
    "fieldname": "remarks",
@@ -408,7 +419,7 @@
  "index_web_pages_for_search": 0,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-11-01 16:30:00.000000",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Customer Visit",

@@ -3,7 +3,7 @@
 		<header class="sticky top-0 z-10 bg-gray-900 px-4 py-3 text-white">
 			<div class="flex items-center justify-between">
 				<div>
-					<div class="text-lg font-semibold">{{ __("Van Sales") }}</div>
+					<div class="text-lg font-semibold">{{ __("Mobile Sales") }}</div>
 					<div class="text-xs text-gray-300">{{ session.ctx?.agent?.agent_name || session.ctx?.full_name }}</div>
 				</div>
 				<span v-if="session.ctx?.trip" class="rounded-full bg-white/15 px-3 py-1 text-xs">

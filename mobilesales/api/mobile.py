@@ -247,6 +247,12 @@ def create_customer(payload: str | dict) -> dict:
 
 
 @frappe.whitelist()
+def get_customer_form_options() -> dict:
+	require_roles()
+	return customers.form_options(ms_settings.get_settings())
+
+
+@frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def outstanding_invoice_query(doctype, txt, searchfield, start, page_len, filters):
 	"""Previous Outstanding picker on Customer Visit: submitted invoices of one customer and company with
@@ -492,6 +498,7 @@ def get_visits(trip: str) -> list[dict]:
 			"visit_datetime",
 			"customer",
 			"customer_name",
+			"off_route",
 			"outcome",
 			"no_sale_reason",
 			"sales_invoice",
@@ -517,6 +524,12 @@ def start_trip(trip: str) -> str:
 def end_day(trip: str) -> str:
 	own_trip(trip)
 	return trip_service.end_day(trip)
+
+
+@frappe.whitelist()
+def reopen_trip(trip: str) -> str:
+	own_trip(trip)
+	return trip_service.reopen_trip(trip)
 
 
 # Settlement

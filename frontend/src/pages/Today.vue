@@ -25,6 +25,9 @@
 				<router-link v-if="trip.status === 'Settling'" to="/settlement" class="btn-primary mt-4 w-full">
 					{{ __("Go to Settlement") }}
 				</router-link>
+				<button v-if="trip.status === 'Settling'" class="btn-secondary mt-2 w-full" :disabled="busy || !online" @click="confirmReopen">
+					{{ __("Reopen Trip") }}
+				</button>
 				<p v-if="message" class="mt-3 text-sm text-red-700">{{ message }}</p>
 			</div>
 
@@ -108,6 +111,11 @@ async function action(method) {
 
 function confirmEndDay() {
 	if (window.confirm(__("End the day? No more visits can be recorded on this trip."))) action("end_day")
+}
+
+function confirmReopen() {
+	if (window.confirm(__("Reopen the trip to record more visits? A settlement not yet submitted for verification is deleted.")))
+		action("reopen_trip")
 }
 
 onMounted(loadStock)
