@@ -130,6 +130,15 @@ class TestMobileTrip(MobileSalesTestCase):
 		with as_user(self.users.store), self.assertRaisesRegex(frappe.ValidationError, "needs status"):
 			trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 1}])
 
+	def test_load_uom_defaults_to_stock_uom(self):
+		trip = self.make_trip(items=[{"item_code": self.plain_item, "qty": 3, "uom": None, "conversion_factor": None}])
+		row = trip.load_items[0]
+		self.assertEqual((row.uom, row.conversion_factor, row.stock_qty), ("Nos", 1, 3))
+		with as_user(self.users.store):
+			se_name = trip_service.top_up(trip.name, [{"item_code": self.plain_item, "qty": 2}])
+		(se_row,) = frappe.get_doc("Stock Entry", se_name).items
+		self.assertEqual((se_row.uom, se_row.conversion_factor, se_row.transfer_qty), ("Nos", 1, 2))
+
 	# 9
 	def test_cancel_from_loaded_reverses_everything(self):
 		trip = self.make_trip(opening_cash_float=300)

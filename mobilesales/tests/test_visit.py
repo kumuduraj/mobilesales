@@ -126,12 +126,53 @@ class TestCustomerVisit(MobileSalesTestCase):
 	def test_no_sale_rejects_items_and_requires_remark(self):
 		frappe.db.set_value("Visit No Sale Reason", self.reason, "requires_remark", 1)
 		with self.assertRaisesRegex(frappe.ValidationError, "Remarks are required"):
-			self.visit("Shop Closed", no_sale_reason=self.reason, submit=False)
+			self.visit("No Sale", no_sale_reason=self.reason, submit=False)
 		with self.assertRaisesRegex(frappe.ValidationError, "Remove the sale items"):
 			self.visit(
 				"No Sale", no_sale_reason=self.reason, remarks="x",
 				items=[{"item_code": self.plain_item, "qty": 1}], submit=False,
 			)  # fmt: skip
+
+	def test_shop_closed_needs_no_reason(self):
+		visit = self.visit("Shop Closed")
+		self.assertEqual((visit.docstatus, visit.no_sale_reason, visit.remarks), (1, None, None))
+		self.assertFalse(visit.sales_invoice or visit.payment_entry)
+		# a reason sent anyway is dropped (the field is hidden for Shop Closed), remarks are kept
+		frappe.db.set_value("Visit No Sale Reason", self.reason, "requires_remark", 1)
+		visit = self.visit("Shop Closed", no_sale_reason=self.reason, remarks="Back at 3 pm")
+		self.assertEqual((visit.no_sale_reason, visit.remarks), (None, "Back at 3 pm"))
+		with self.assertRaisesRegex(frappe.ValidationError, "Remove the sale items"):
+			self.visit("Shop Closed", items=[{"item_code": self.plain_item, "qty": 1}], submit=False)
+		self.assertEqual(frappe.db.get_value("Mobile Trip", self.trip_a.name, "no_sale_visits"), 2)
+
+	def test_off_route_visits(self):
+		on_route = frappe.get_doc(
+			{"doctype": "Mobile Route", "route_name": f"{PREFIX} Visit Route", "customers": [{"customer": self.customer}]}
+		).insert().name
+		frappe.db.set_value("Mobile Trip", self.trip_a.name, "route", on_route)
+		self.trip_a.reload()
+		visit = self.visit("Shop Closed")
+		self.assertEqual(visit.off_route, 0)
+
+		# any customer may be visited and invoiced, as the agent, through the API
+		other = self.other_customer()
+		with as_user(self.agent_a.user):
+			self.assertIn(other, [c.name for c in mobile_api.search_customers(f"{PREFIX} Other")])
+			result = mobile_api.submit_visit(
+				{
+					"client_ref": "off-1", "mobile_trip": self.trip_a.name, "customer": other, "outcome": "Sale",
+					"sale_items": [{"item_code": self.plain_item, "qty": 1}], "collect_amount": 100,
+				}
+			)  # fmt: skip
+			history = {v.name: v.off_route for v in mobile_api.get_visits(self.trip_a.name)}
+		self.assertTrue(result["sales_invoice"])
+		self.assertEqual(frappe.db.get_value("Customer Visit", result["name"], "off_route"), 1)
+		self.assertEqual(history, {visit.name: 0, result["name"]: 1})
+
+		# a trip without a route: every visit is off route
+		frappe.db.set_value("Mobile Trip", self.trip_a.name, "route", None)
+		self.trip_a.reload()
+		self.assertEqual(self.visit("Shop Closed").off_route, 1)
 
 	# 2
 	def test_pending_approval_then_approve_or_reject(self):

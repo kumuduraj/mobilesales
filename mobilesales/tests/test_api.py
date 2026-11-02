@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.utils import flt, nowdate
+from frappe.utils.nestedset import get_root_of
 from frappe.website.serve import get_response
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
@@ -286,6 +287,36 @@ class TestMobileAPI(MobileSalesTestCase):
 		self.assertEqual((customer.customer_group, customer.territory), (self.settings.default_customer_group, self.settings.default_territory))
 		self.assertEqual(frappe.db.get_value("Address", customer.customer_primary_address, "city"), "Kandy")
 		self.assertFalse(frappe.db.exists("Custom DocPerm", {"parent": "Customer", "role": "Mobile Sales Agent", "create": 1}))
+
+	def test_create_customer_group_territory_and_route(self):
+		group = frappe.get_doc({"doctype": "Customer Group", "customer_group_name": f"{PREFIX} Group", "parent_customer_group": get_root_of("Customer Group")}).insert().name
+		territory = frappe.get_doc({"doctype": "Territory", "territory_name": f"{PREFIX} Territory", "parent_territory": get_root_of("Territory")}).insert().name
+		route = frappe.get_doc(
+			{"doctype": "Mobile Route", "route_name": f"{PREFIX} New Route", "customers": [{"customer": self.customer, "sequence": 7}]}
+		).insert().name
+		closed = frappe.get_doc({"doctype": "Mobile Route", "route_name": f"{PREFIX} Closed Route", "is_active": 0}).insert().name
+		with as_user(self.agent_a.user):
+			options = api.get_customer_form_options()
+			created = api.create_customer({"customer_name": f"{PREFIX} Route Shop", "customer_group": group, "territory": territory, "route": route})
+			with self.assertRaisesRegex(frappe.ValidationError, "not an active route"):
+				api.create_customer({"customer_name": f"{PREFIX} Closed Shop", "route": closed})
+			with self.assertRaisesRegex(frappe.ValidationError, "is a group"):
+				api.create_customer({"customer_name": f"{PREFIX} Group Shop", "customer_group": get_root_of("Customer Group")})
+			with self.assertRaisesRegex(frappe.ValidationError, "not found"):
+				api.create_customer({"customer_name": f"{PREFIX} Nowhere Shop", "territory": f"{PREFIX} Nowhere"})
+			self.assertFalse(frappe.has_permission("Mobile Route", "write"))
+		self.assertIn(group, options["customer_groups"])
+		self.assertIn(territory, options["territories"])
+		self.assertIn(route, options["routes"])
+		self.assertNotIn(closed, options["routes"])
+		self.assertNotIn(get_root_of("Territory"), options["territories"])
+		self.assertEqual((options["default_customer_group"], options["default_territory"]), (self.settings.default_customer_group, self.settings.default_territory))
+
+		customer = frappe.get_doc("Customer", created["name"])
+		self.assertEqual((customer.customer_group, customer.territory, created["route"]), (group, territory, route))
+		rows = [(r.customer, r.sequence) for r in frappe.get_doc("Mobile Route", route).customers]
+		self.assertEqual(rows, [(self.customer, 7), (created["name"], 8)])
+		self.assertFalse(frappe.db.exists("Custom DocPerm", {"parent": "Mobile Route"}))
 
 	# settlement
 

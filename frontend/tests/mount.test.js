@@ -77,6 +77,7 @@ const API = {
 			visit_datetime: "2026-11-01 10:00:00",
 			customer: "Pilot Customer 1",
 			customer_name: "Pilot Customer 1",
+			off_route: 0,
 			outcome: "Sale",
 			no_sale_reason: null,
 			sales_invoice: "MB-SINV-26-00001",
@@ -85,7 +86,29 @@ const API = {
 			rounded_total: 1325,
 			total_collected: 1325,
 		},
+		{
+			name: "CV-26-000002",
+			docstatus: 1,
+			visit_datetime: "2026-11-01 11:00:00",
+			customer: "Walk-in Shop",
+			customer_name: "Walk-in Shop",
+			off_route: 1,
+			outcome: "Shop Closed",
+			no_sale_reason: null,
+			sales_invoice: null,
+			payment_entry: null,
+			grand_total: 0,
+			rounded_total: 0,
+			total_collected: 0,
+		},
 	],
+	get_customer_form_options: {
+		customer_groups: ["Commercial", "Retail"],
+		territories: ["Colombo", "Sri Lanka"],
+		routes: ["Pilot Route 1", "Pilot Route 2"],
+		default_customer_group: "Retail",
+		default_territory: "Colombo",
+	},
 	get_customer: {
 		name: "Pilot Customer 1",
 		customer_name: "Pilot Customer 1",
@@ -122,6 +145,7 @@ const API = {
 const SCENARIOS = [
 	{ title: "agent with a Loaded trip", boot: boot(AGENT, trip("Loaded")), expect: "MTRIP-26-00003" },
 	{ title: "agent with an In Field trip", boot: boot(AGENT, trip("In Field")), expect: "MTRIP-26-00003" },
+	{ title: "agent with a Settling trip", boot: boot(AGENT, trip("Settling")), expect: "MTRIP-26-00003" },
 	{ title: "agent without an open trip", boot: boot(AGENT, null), expect: "Van Agent 1" },
 	{ title: "logged-in user without an agent record", boot: boot(null, null), expect: "not set up as a Mobile Sales Agent" },
 ]
@@ -142,7 +166,7 @@ afterEach(() => vi.restoreAllMocks())
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
 
-async function render(bootData, path) {
+async function render(bootData, path, interact) {
 	window.ms_boot = bootData
 	window.csrf_token = bootData.csrf_token
 	document.body.innerHTML = '<div id="app"></div>'
@@ -153,6 +177,10 @@ async function render(bootData, path) {
 	app.mount("#app")
 	await router.isReady()
 	for (let i = 0; i < 5; i++) await settle()
+	if (interact) {
+		await interact(document.getElementById("app"))
+		for (let i = 0; i < 5; i++) await settle()
+	}
 	const text = document.getElementById("app").textContent.replace(/\s+/g, " ")
 	app.unmount()
 	window.removeEventListener("unhandledrejection", onRejection)
@@ -165,10 +193,46 @@ describe("SPA mounts and renders every route", () => {
 			it(`${scenario.title}: ${decodeURIComponent(path)}`, async () => {
 				const text = await render(scenario.boot, path)
 				expect(problems).toEqual([])
-				expect(text).toContain("Van Sales")
+				expect(text).toContain("Mobile Sales")
 				expect(text).toContain(scenario.expect)
 				expect(text).not.toContain("App failed to load")
 			})
 		}
 	}
+})
+
+describe("screens", () => {
+	const clickButton = (root, label) => [...root.querySelectorAll("button")].find((b) => b.textContent.includes(label)).click()
+
+	it("Today offers Reopen Trip while Settling", async () => {
+		const text = await render(boot(AGENT, trip("Settling")), "/")
+		expect(problems).toEqual([])
+		expect(text).toContain("Reopen Trip")
+		expect(text).toContain("Go to Settlement")
+	})
+
+	it("History tags off-route visits", async () => {
+		const text = await render(boot(AGENT, trip("In Field")), "/history")
+		expect(problems).toEqual([])
+		expect(text.match(/Off route/g)?.length).toBe(1)
+	})
+
+	it("New customer form has group, territory and route pickers with Settings defaults", async () => {
+		let selects
+		const text = await render(boot(AGENT, trip("In Field")), "/route", async (root) => {
+			clickButton(root, "New customer")
+			await settle()
+			selects = [...root.querySelectorAll("form select")].map((s) => ({
+				value: s.value,
+				options: [...s.options].map((o) => o.value),
+			}))
+		})
+		expect(problems).toEqual([])
+		expect(text).toContain("Customer group")
+		expect(selects).toEqual([
+			{ value: "Retail", options: ["Commercial", "Retail"] },
+			{ value: "Colombo", options: ["Colombo", "Sri Lanka"] },
+			{ value: "", options: ["", "Pilot Route 1", "Pilot Route 2"] },
+		])
+	})
 })

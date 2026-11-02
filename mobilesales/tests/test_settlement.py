@@ -399,3 +399,48 @@ class TestMobileSettlement(MobileSalesTestCase):
 
 		doc = self.approve_flow(doc.name)  # recounted and verified again from Draft
 		self.assertEqual((doc.docstatus, doc.verified_by_store, doc.verified_by_cashier), (1, STORE_KEEPER, CASHIER))
+
+	# Reopen Trip (Settling -> In Field)
+
+	def test_reopen_trip_rules(self):
+		trip = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 1)]])
+		for user in (self.agent_b.user, STORE_KEEPER, CASHIER):
+			with as_user(user), self.assertRaises(frappe.PermissionError):
+				trip_service.reopen_trip(trip.name)
+
+		# no settlement yet: the agent reopens, sells again, ends the day again
+		with as_user(self.agent_a.user):
+			self.assertEqual(mobile_api.reopen_trip(trip.name), "In Field")
+			with self.assertRaisesRegex(frappe.ValidationError, "needs status"):
+				trip_service.reopen_trip(trip.name)
+		self.sell(trip.name, [(self.plain_item, 1)])
+		with as_user(self.agent_a.user):
+			trip_service.end_day(trip.name)
+
+		# draft settlement: deleted on reopen
+		draft = self.draft(trip, returned={self.plain_item: 3})
+		with as_user(self.agent_a.user):
+			self.assertEqual(trip_service.reopen_trip(trip.name), "In Field")
+			self.assertFalse(frappe.db.exists("Mobile Settlement", draft.name))
+			self.assertIn("reopened", frappe.get_all("Comment", filters={"reference_name": trip.name, "comment_type": "Info"}, pluck="content")[0])
+			trip_service.end_day(trip.name)
+
+		# Pending Store: refused for everyone until a supervisor rejects it to Draft
+		draft = self.draft(trip, returned={self.plain_item: 3})
+		self.act(draft.name, "Submit for Verification", self.agent_a.user)
+		for user in (self.agent_a.user, SUPERVISOR):
+			with as_user(user), self.assertRaisesRegex(frappe.ValidationError, "reject it to Draft"):
+				trip_service.reopen_trip(trip.name)
+		self.assertEqual(frappe.db.get_value("Mobile Trip", trip.name, "status"), "Settling")
+		self.act(draft.name, "Reject", SUPERVISOR)
+		with as_user(SUPERVISOR):
+			self.assertEqual(trip_service.reopen_trip(trip.name), "In Field")
+		self.assertFalse(frappe.db.exists("Mobile Settlement", draft.name))
+
+		# settled: never
+		with as_user(self.agent_a.user):
+			trip_service.end_day(trip.name)
+		done = self.approve_flow(self.draft(trip, returned={self.plain_item: 3}).name)
+		self.assertEqual(done.docstatus, 1)
+		with as_user(SUPERVISOR), self.assertRaisesRegex(frappe.ValidationError, "needs status"):
+			trip_service.reopen_trip(trip.name)
