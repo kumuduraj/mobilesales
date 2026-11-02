@@ -278,7 +278,7 @@ def refresh_sales_and_collections(doc, trip):
 	visits = frappe.get_all(
 		"Customer Visit",
 		filters={"mobile_trip": trip.name, "docstatus": 1},
-		fields=["outcome", "collect_amount", "rounded_total"],
+		fields=["outcome", "collect_amount", "rounded_total", "sales_invoice", "credit_journal"],
 	)
 	doc.total_visits = len(visits)
 	doc.sales_visits = sum(1 for v in visits if v.outcome == "Sale")
@@ -286,7 +286,10 @@ def refresh_sales_and_collections(doc, trip):
 	doc.collection_only_visits = sum(1 for v in visits if v.outcome == "Collection Only")
 	sales = [v for v in visits if v.outcome == "Sale"]
 	doc.cash_sales_amount = sum(flt(v.collect_amount) for v in sales)
-	doc.credit_sales_amount = sum(flt(v.rounded_total) - flt(v.collect_amount) for v in sales)
+	# credit given = what is left open on the invoice: return credit set off against it is not a credit sale
+	doc.credit_sales_amount = sum(
+		max(flt(v.rounded_total) - flt(v.collect_amount) - credit_on_invoice(v.credit_journal, v.sales_invoice), 0) for v in sales
+	)
 
 	invoices = frappe.get_all(
 		"Sales Invoice", filters={"mobile_trip": trip.name, "docstatus": 1, "is_return": 0}, fields=["name", "grand_total"]
@@ -310,6 +313,14 @@ def refresh_sales_and_collections(doc, trip):
 	doc.collected_current = current
 	doc.collected_previous = previous
 	doc.total_collected = current + previous
+
+
+def credit_on_invoice(journal, invoice) -> float:
+	if not (journal and invoice):
+		return 0.0
+	from mobilesales.services.prints import journal_pairs
+
+	return flt(sum(p.amount for p in journal_pairs(journal) if p.invoice == invoice), 2)
 
 
 def refresh_cash(doc, trip, agent):

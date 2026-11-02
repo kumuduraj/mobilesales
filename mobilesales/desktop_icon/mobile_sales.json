@@ -1,0 +1,37 @@
+{
+ "app": "mobilesales",
+ "creation": "2026-11-03 09:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Desktop Icon",
+ "hidden": 0,
+ "icon": "truck",
+ "icon_type": "Link",
+ "idx": 30,
+ "label": "Mobile Sales",
+ "link_to": "Mobile Sales",
+ "link_type": "Workspace Sidebar",
+ "modified": "2026-11-03 09:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Mobile Sales",
+ "owner": "Administrator",
+ "parent_icon": "",
+ "restrict_removal": 0,
+ "roles": [
+  {
+   "role": "Mobile Sales Supervisor"
+  },
+  {
+   "role": "Mobile Sales Store Keeper"
+  },
+  {
+   "role": "Mobile Sales Cashier"
+  },
+  {
+   "role": "Accounts Manager"
+  },
+  {
+   "role": "System Manager"
+  }
+ ],
+ "standard": 1
+}

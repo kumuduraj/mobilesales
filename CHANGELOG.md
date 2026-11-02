@@ -1,3 +1,28 @@
+## v0.7.0 — Phase 6: reports, Mobile Trip Day Report, workspace
+
+- Reports (Script Reports, module Mobile Sales; ref_doctype Mobile Trip; filters company, dates, agent, vehicle, route, territory):
+  Salesperson Performance, Daily Trip Summary, Customer Visit Register (off route, manual discount, returns, credit applied),
+  No Sale Reason Analysis (chart), Customer Stock Position, Route Coverage, Mobile Stock Variance, Mobile Cash Variance,
+  Outstanding by Agent (ageing), new Customer Returns Register (adds up to the customer return warehouse's Stock Ledger) and new
+  Discount Report (manual discounts vs the agent cap, pricing-rule effect apart). One shared module, services/reports.py.
+- Roles: Supervisor, Store Keeper, Cashier, System Manager, Accounts Manager (now read / report on Mobile Trip, Customer Visit,
+  Mobile Settlement). Agents: Customer Visit Register, Customer Stock Position, Outstanding by Agent and the Day Report, own trips only.
+- Mobile Trip Day Report (spec §7.1): Script Report (filter trip) and A4 print format on Mobile Settlement — header with vehicle /
+  helper, KPIs, visit log with map links, missed customers, customer updates, shelf stock, sales by invoice (return credit and cash
+  apart) and by item, collections, customer returns, stock (issued / top-up / sold / returned / damaged / missing), cash with
+  denominations and cheques, sign-off from the workflow log. The PDF is attached to the settlement on submit (background, after commit).
+- Daily email at 20:00 (scheduler cron) of the day's settled trips' Day Reports to the Mobile Sales Supervisors; Mobile Sales
+  Settings → Daily Report Email (default off).
+- Workspace "Mobile Sales" with sidebar and desktop icon: shortcuts (incl. Mobile Visit Rejection), 7 number cards, 4 charts
+  (sales by agent, strike rate, no-sale reasons, returns by reason), report links.
+- Phone: Today screen "My day" card (visits / planned, sales, cash collected, returns, credit given) via get_my_day.
+- Fix: settlement Credit Sales no longer counts return credit set off against the sale (MSET-26-00004 showed 1,825 credit sales for a
+  day with no credit given).
+- Tests: a seeded trip (discounts, top-up, credit sale, returns against today's and an older invoice, off-route no-sale, missed
+  customer, stock and cash shortage) with every report's totals compared to GL / Payment Ledger / Stock Ledger; agent scoping and
+  report roles; Day Report sections, A4 print, PDF attached once; email built (not sent), off by default, skipped without trips;
+  number cards and charts; vitest for "My day".
+
 ## v0.6.1 — fixes from the v0.6.0 live run
 
 - Fix: the Returns step dropped a return that was filled in but not added with "+ Add return" (live run

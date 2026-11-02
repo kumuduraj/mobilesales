@@ -34,19 +34,28 @@
 				<p v-if="message" class="mt-3 text-sm text-red-700">{{ message }}</p>
 			</div>
 
-			<div class="grid grid-cols-3 gap-2">
-				<div class="card p-3 text-center">
-					<div class="text-2xl font-semibold">{{ trip.visits || 0 }}</div>
-					<div class="text-xs text-gray-500">{{ __("Visits") }}</div>
+			<!-- "My day": the same figures as the Mobile Trip Day Report (services/reports.my_day) -->
+			<div class="card" data-my-day>
+				<div class="mb-2 font-semibold">{{ __("My day") }}</div>
+				<div class="grid grid-cols-2 gap-2 text-center">
+					<div class="rounded-lg bg-gray-50 p-2">
+						<div class="text-2xl font-semibold">{{ day.visits }}<span v-if="day.planned_visits" class="text-sm text-gray-500"> / {{ day.planned_visits }}</span></div>
+						<div class="text-xs text-gray-500">{{ __("Visits") }}<span v-if="day.planned_visits"> ({{ __("planned") }})</span></div>
+					</div>
+					<div class="rounded-lg bg-gray-50 p-2">
+						<div class="text-base font-semibold">{{ money(day.sales_total) }}</div>
+						<div class="text-xs text-gray-500">{{ __("Sales") }} · {{ day.invoices }} {{ __("invoices") }}</div>
+					</div>
+					<div class="rounded-lg bg-gray-50 p-2">
+						<div class="text-base font-semibold">{{ money(day.cash_collected) }}</div>
+						<div class="text-xs text-gray-500">{{ __("Cash collected") }}</div>
+					</div>
+					<div class="rounded-lg bg-gray-50 p-2">
+						<div class="text-base font-semibold">{{ money(day.return_value) }}</div>
+						<div class="text-xs text-gray-500">{{ __("Returns (credit)") }}</div>
+					</div>
 				</div>
-				<div class="card p-3 text-center">
-					<div class="text-base font-semibold">{{ money(trip.invoiced_amount) }}</div>
-					<div class="text-xs text-gray-500">{{ __("Sales") }}</div>
-				</div>
-				<div class="card p-3 text-center">
-					<div class="text-base font-semibold">{{ money(trip.collected_amount) }}</div>
-					<div class="text-xs text-gray-500">{{ __("Collected") }}</div>
-				</div>
+				<div v-if="day.credit_given" class="mt-2 text-sm text-gray-600">{{ __("Credit given") }}: {{ money(day.credit_given) }}</div>
 			</div>
 
 			<div class="card">
@@ -79,6 +88,12 @@ import { __ } from "../translation"
 
 const trip = computed(() => session.ctx?.trip)
 const stock = ref([])
+const myDay = ref(null)
+// until get_my_day answers, the trip's own summary keeps the card filled
+const day = computed(() => myDay.value || {
+	visits: trip.value?.visits || 0, planned_visits: 0, invoices: trip.value?.invoices || 0, sales_total: trip.value?.invoiced_amount || 0,
+	cash_collected: trip.value?.collected_amount || 0, return_value: 0, credit_given: 0,
+})
 const busy = ref(false)
 const message = ref("")
 
@@ -91,10 +106,19 @@ async function loadStock() {
 	}
 }
 
+async function loadMyDay() {
+	if (!trip.value) return
+	try {
+		myDay.value = await call(m("get_my_day"), { trip: trip.value.name })
+	} catch (e) {
+		myDay.value = null // the card keeps the trip's own figures
+	}
+}
+
 async function refresh() {
 	busy.value = true
 	await loadContext()
-	await loadStock()
+	await Promise.all([loadStock(), loadMyDay()])
 	busy.value = false
 }
 
@@ -121,5 +145,5 @@ function confirmReopen() {
 		action("reopen_trip")
 }
 
-onMounted(loadStock)
+onMounted(() => Promise.all([loadStock(), loadMyDay()]))
 </script>

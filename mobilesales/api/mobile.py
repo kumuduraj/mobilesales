@@ -14,7 +14,7 @@ from frappe.utils import cint, cstr, flt, now_datetime, strip_html
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
-from mobilesales.services import customers, invoicing, receipts, reconciliation, returns, settlement
+from mobilesales.services import customers, invoicing, receipts, reconciliation, reports, returns, settlement
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
 
@@ -163,6 +163,13 @@ def get_context() -> dict:
 		"return_reasons": frappe.get_all("Mobile Return Reason", fields=["name", "requires_remark"], order_by="name asc"),
 		"denominations": list(reconciliation.DENOMINATIONS),
 	}
+
+
+@frappe.whitelist()
+def get_my_day(trip: str) -> dict:
+	"""Today screen "My day": the Day Report's figures (visits, sales, cash, returns) for the agent's trip."""
+	doc = own_trip(trip)
+	return reports.my_day(doc.name)
 
 
 @frappe.whitelist()

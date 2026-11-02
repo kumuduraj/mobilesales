@@ -83,6 +83,7 @@ jinja = {
 		"mobilesales.services.prints.mobile_invoice_print",
 		"mobilesales.services.prints.mobile_return_note_print",
 		"mobilesales.services.prints.mobile_visit_bill_print",
+		"mobilesales.services.reports.mobile_day_report",
 	],
 }
 
@@ -235,6 +236,13 @@ doc_events = {
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"cron": {
+		# Mobile Trip Day Reports of the day's settled trips to the supervisors (Mobile Sales Settings switch)
+		"0 20 * * *": ["mobilesales.services.day_report.send_daily_reports"],
+	},
+}
 
 # scheduler_events = {
 # 	"all": [
