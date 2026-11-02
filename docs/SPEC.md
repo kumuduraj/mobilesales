@@ -86,7 +86,7 @@ One record per field salesperson. Autoname `MSA-.####`.
 
 ### 3.3 Mobile Route
 
-`route_name`, `territory`, child **Mobile Route Customer** (`customer`, `sequence`, `visit_frequency` Select Daily/Weekly/Fortnightly, `visit_day` Select Mon–Sun). Drives planned visits and route coverage.
+`route_name`, `territory`, `is_active` (Check, default on; only active routes are offered in the app), child **Mobile Route Customer** (`customer`, `sequence`, `visit_frequency` Select Daily/Weekly/Fortnightly, `visit_day` Select Mon–Sun). Drives planned visits and route coverage.
 
 ### 3.4 Visit No Sale Reason
 
@@ -117,7 +117,7 @@ Three submittable DocTypes carry the process: **Mobile Trip** (one agent-day), *
 | source_warehouse | Link Warehouse | default from Settings |
 | opening_cash_float | Currency | Change given to agent; posted by JE main cash → agent cash |
 | status | Select | Draft / Loaded / In Field / Settling / Settled / Cancelled (read only, set by code) |
-| load_items | Table **Mobile Trip Load Item** | item_code, uom, conversion_factor, qty, stock_qty, batch_no, available_at_source (read only) |
+| load_items | Table **Mobile Trip Load Item** | item_code, uom, conversion_factor, qty, stock_qty, batch_no, available_at_source (read only). uom defaults to the item's stock UOM (conversion_factor 1) in the form, the Top-up dialog and on the server when left empty |
 | stock_entries | Table **Mobile Trip Stock Entry** (read only) | stock_entry, purpose (Issue / Top-up / Return / Damage / Shortage), posting_datetime |
 | settlement | Link Mobile Settlement | read only |
 | summary section (read only, refreshed on demand) | Int/Currency | visits, sales_visits, no_sale_visits, invoices, invoiced_amount, collected_amount |
@@ -130,13 +130,14 @@ On **submit**: creates Stock Entry (Material Transfer, source → van) from `loa
 | --- | --- | --- |
 | mobile_trip | Link Mobile Trip | reqd, filter status = In Field, agent = session agent |
 | agent | Link Mobile Sales Agent | fetch |
-| customer | Link Customer | reqd |
+| customer | Link Customer | reqd; any customer, not only the route's |
+| off_route | Check | read only; set on save: customer is not on the trip's route (no route = off route). History shows an "Off route" tag |
 | visit_datetime | Datetime | default now |
 | latitude / longitude | Float | captured by device |
 | check_in_photo | Attach Image | optional |
 | outcome | Select | Sale / No Sale / Collection Only / Shop Closed |
-| no_sale_reason | Link Visit No Sale Reason | mandatory_depends_on outcome in (No Sale, Shop Closed) |
-| remarks | Small Text | mandatory if reason.requires_remark |
+| no_sale_reason | Link Visit No Sale Reason | shown and mandatory for outcome No Sale only; hidden and cleared for Shop Closed |
+| remarks | Small Text | mandatory if reason.requires_remark (No Sale); optional for Shop Closed |
 | **Customer update** section | | `update_customer` Check; `new_customer_name`, `new_mobile_no`, `new_email`, `new_address_line1`, `new_city`, `new_contact_person`, `new_tax_id` |
 | customer_update_status | Select | Not Requested / Applied / Pending Approval / Rejected |
 | shelf_stock | Table **Customer Visit Shelf Stock** | item_code, qty_on_shelf, uom, expiry_date, competitor_item (Data), remarks |
@@ -204,7 +205,7 @@ All document creation runs server-side in one DB transaction per user action; a 
 ### 5.1 Customer Visit submit
 
 1. Validate: trip status = In Field; `frappe.session.user` = trip.agent.user (Supervisor bypass); visit_datetime within trip_date; geolocation present if Settings require it.
-2. Outcome **No Sale / Shop Closed**: require reason; reject non-empty `sale_items`.
+2. Outcome **No Sale**: require reason (and remarks when the reason requires them). Outcome **Shop Closed**: no reason (cleared if sent), remarks optional. Both reject `sale_items` and any collection.
 3. Outcome **Sale**: `sale_items` mandatory. For each line, check `qty × conversion_factor ≤ actual_qty` in van Bin (reads `tabBin` with `for update` to stop two parallel visits overselling).
 4. Apply customer updates: if `apply_customer_updates_directly` → update Customer (`customer_name`, `mobile_no`, `email_id`, `tax_id`), the primary Contact and primary Billing Address (create if missing) → status Applied. Else status Pending Approval; Supervisor action `Approve Customer Update` applies it later. Frappe Version log keeps history.
 5. Shelf stock rows saved as-is (no stock ledger impact; customer stock is not company stock).
@@ -259,6 +260,8 @@ Post-conditions checked before commit: van Bin qty = 0 for all items; agent cash
 
 Draft → (submit, stock issued) Loaded → (Start Trip) In Field → (End Day: no more visits) Settling → (settlement submit) Settled. Cancel allowed only from Loaded with no visits; it cancels the issue Stock Entry.
 
+**Reopen Trip** (Settling → In Field, `reopen_trip`): the trip's agent or a Supervisor / System Manager, from the Desk trip form or the app's Today screen (with a confirm). Allowed when the trip has no settlement, or its settlement is still workflow Draft (docstatus 0); that draft is deleted. Refused once the settlement is Pending Store or later: a Supervisor must Reject it to Draft first. A comment on the trip records who reopened it and which draft was deleted.
+
 ### 5.6 Batch-tracked items
 
 Batches flow through standard ERPNext v16 Serial and Batch Bundles; the app never picks batches by hand except at settlement return.
@@ -281,8 +284,8 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 
 | Screen | Content |
 | --- | --- |
-| Today | Current trip status, van stock list with live qty, KPIs (visits, sales, collected), Start Trip / End Day |
-| Route | Planned customers for the day in sequence, visited ticks, search any customer, add new customer (quick-entry) |
+| Today | Current trip status, van stock list with live qty, KPIs (visits, sales, collected), Start Trip / End Day / Reopen Trip |
+| Route | Planned customers for the day in sequence, visited ticks, search and visit any customer (off-route visits allowed), add new customer (quick-entry: name, mobile, address, customer group and territory pickers defaulting from Settings, optional route of any active Mobile Route) |
 | Visit | Step 1 check-in (GPS + photo) → Step 2 customer details edit → Step 3 shelf stock count → Step 4 outcome: No Sale (reason) or Sale (cart from van stock) → Step 5 collection (current + previous outstanding) → Submit → Print |
 | History | Today's visits, reprint invoice/receipt |
 | Settlement | Pre-filled reconciliation, agent enters returned/damaged counts and cash denominations, submits for verification |
@@ -298,11 +301,12 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 | `get_route_plan(trip)` | Route customers + visited flag + outstanding |
 | `get_customer(customer)` | Details, primary contact/address, outstanding invoices, last shelf stock |
 | `price_cart(trip, customer, items)` | Builds unsaved Sales Invoice, returns totals/taxes/pricing-rule results |
-| `search_customers(q)` / `create_customer(payload)` | Customer search; quick-entry new customer |
+| `search_customers(q)` / `create_customer(payload)` | Customer search (any customer); quick-entry new customer. Payload may carry `customer_group`, `territory` (leaf nodes; default from Settings) and `route` (active Mobile Route: the customer is appended with sequence = last + 1, under ignore_permissions; agents keep read only on routes) |
+| `get_customer_form_options()` | Leaf customer groups and territories, active routes, Settings defaults for the new-customer form |
 | `submit_visit(payload)` | Creates + submits Customer Visit (and SI/PE); idempotent on `client_ref` |
 | `upload_visit_photo(filename, filedata, visit / client_ref)` | Check-in photo (jpeg/png/webp, ≤ 5 MB) on the agent's own visit |
 | `get_visits(trip)` | The trip's visits (History screen) |
-| `start_trip(trip)` / `end_day(trip)` | Status transitions |
+| `start_trip(trip)` / `end_day(trip)` / `reopen_trip(trip)` | Status transitions (§5.5) |
 | `get_settlement_draft(trip)` | Computed reconciliation (creates nothing) |
 | `save_settlement(trip, payload)` | Creates / updates the Draft settlement with the agent's fields only (returned / damaged qty and batch, cash denominations); recomputes the reconciliation |
 | `submit_settlement_for_verification(settlement_name)` | Applies the workflow action from Draft to Pending Store (§6.5) |

@@ -16,9 +16,25 @@
 - The host page refuses users without a Mobile Sales role; guests are sent to the login page.
 - Printing through the browser print view; the Android ESC/POS hand-off is deferred until after v1.0.0
   (`get_receipt_escpos` already returns the receipt lines).
+- The app is called "Mobile Sales" everywhere (header, installed-app name and short name); service worker
+  cache v3 so installed phones drop the old shell.
+- Shop Closed needs no reason (the field is hidden and cleared); remarks are optional. No Sale still needs a
+  reason.
+- New customer from the phone: customer group and territory pickers (defaults from Settings) and an optional
+  route; the customer is appended to the end of that route. Mobile Route gets Is Active (default on); only
+  active routes are offered. No Customer / Route permission changes.
+- Off-route visits: agents can search, visit and invoice any customer. Customer Visit.off_route (read only)
+  marks visits to customers not on the trip's route; History shows an "Off route" tag. Patch fills it for
+  existing visits.
+- Mobile Trip load items and the Top-up dialog fill UOM = stock UOM (conversion factor 1) when an item is
+  chosen; the server defaults them when empty.
+- Reopen Trip (Settling → In Field) for the trip's agent or a supervisor, from the Desk trip form and the
+  Today screen: allowed with no settlement or a workflow Draft settlement (deleted); refused from Pending
+  Store on (a supervisor rejects it to Draft first).
 - Tests: never commit (frappe.db.commit raises inside every test, after a host-page test committed test
   data to the live site); nested `as_user` blocks now return to the previous user, so no API flow runs
-  as Administrator. All test runs moved to the dedicated test site mstest.local. 85 tests.
+  as Administrator. All test runs moved to the dedicated test site mstest.local. 91 tests; SPA mount test
+  (vitest) covers every route plus the Reopen, Off route and new-customer screens.
 
 ## v0.4.1 — fixes from the live pilot
 
