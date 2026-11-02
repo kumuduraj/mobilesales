@@ -1,4 +1,4 @@
-## v0.7.0 — Phase 6: reports, Mobile Trip Day Report, workspace (unreleased)
+## v0.7.0 — Phase 6: reports, Mobile Trip Day Report, workspace
 
 - Reports (Script Reports, module Mobile Sales; ref_doctype Mobile Trip; filters company, dates, agent, vehicle, route, territory):
   Salesperson Performance, Daily Trip Summary, Customer Visit Register (off route, manual discount, returns, credit applied),
