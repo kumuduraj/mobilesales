@@ -93,6 +93,7 @@ jinja = {
 # before_install = "mobilesales.install.before_install"
 after_install = "mobilesales.setup.install.after_install"
 after_migrate = ["mobilesales.setup.install.after_migrate"]
+before_uninstall = "mobilesales.setup.install.before_uninstall"
 
 # Fixtures
 # --------

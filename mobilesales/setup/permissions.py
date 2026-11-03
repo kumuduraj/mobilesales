@@ -147,3 +147,29 @@ def check_standard_permission_drift() -> list[str]:
 		)
 	save_baseline(baseline)
 	return drifted
+
+
+def _custom_rules(doctype) -> dict:
+	rights = _rights()
+	rows = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=["role", *rights])
+	return {f"{row.role}|{row.permlevel}|{row.if_owner}": {r: row.get(r) or 0 for r in rights} for row in rows}
+
+
+def remove_agent_permissions() -> list[str]:
+	"""uninstall-app: delete the Mobile Sales role rules; where what is left is exactly ERPNext's standard rules (the
+	copy made at install), delete the copy too, so the standard permissions apply again. A copy changed since (by an
+	admin, another app or an ERPNext upgrade) is kept and named. Returns the DocTypes whose copy was kept."""
+	kept = []
+	for doctype, managed in ROLE_PERMISSIONS.items():
+		frappe.db.delete("Custom DocPerm", {"parent": doctype, "role": ["in", list(managed)]})
+		left = _custom_rules(doctype)
+		if not left:
+			continue
+		if left == standard_rules(doctype):
+			frappe.db.delete("Custom DocPerm", {"parent": doctype})
+		else:
+			kept.append(doctype)
+			print(f"mobilesales: Custom DocPerm of {doctype} kept (changed since the install copy), review in Role Permission Manager")
+	frappe.db.delete("DefaultValue", {"parent": "__default", "defkey": BASELINE_KEY})
+	frappe.clear_cache()
+	return kept

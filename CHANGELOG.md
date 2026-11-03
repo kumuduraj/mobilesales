@@ -1,3 +1,61 @@
+## v1.0.0 — Phase 7: hardening
+
+Security (docs/SECURITY_REVIEW.md, 11 findings fixed):
+- Visit, settlement and trip links to the vouchers they posted can no longer be typed in (REST save of a draft, or an
+  update after submit). Cancel chains only cancel a voucher that points back to the document; a supervisor cancelling
+  a forged visit could otherwise have cancelled an office invoice.
+- Settlement verifiers (Verified by Store / Cashier) are set only by the workflow.
+- Agents see only selling Item Prices, their own Serial and Batch Bundles, Contacts / Addresses of customers, and
+  receivable accounts plus their own cash account in link searches.
+- `price_cart` refuses other customers' invoices. Photo size is checked before decoding, and a retake replaces the
+  earlier photo. Search text is capped. The return invoice picker searches one customer's invoices and keeps the
+  typed text (bug).
+- Per-user limits on the expensive phone calls (pricing, submit, uploads, invoice list, settlement draft, receipts).
+
+Data integrity:
+- Retries and double taps change nothing twice:
+  - start / end day and Submit for Verification return the current state;
+  - a settlement can't be started twice (locking read);
+  - a retried visit that was cancelled meanwhile is refused, not shown as recorded.
+- Tested with ledger snapshots (stock ledger, Bin, batches, GL, payment ledger, outstanding): visit, settlement and
+  trip cancel restore everything.
+- Real-thread races on a disposable site: last stock (one visit sells, the other is refused), the same visit sent
+  twice at once (one visit), a settlement started twice at once (one settlement).
+- No sale at a missing price: an item without a valid Item Price on the visit date is refused instead of being
+  invoiced at 0.
+- Invoices delivered with a Delivery Note are left out of the return pickers and refused with a clear message
+  (return them at the office).
+- Patches run twice without change (tested).
+
+Upgrade safety (ERPNext version-16 head: frappe 16.54.0, erpnext 16.53.0, throwaway bench): 9 of 133 tests broke, all fixed:
+- Stand-alone credit notes now carry a stock value (van, store or Item valuation). ERPNext 16.5x refuses them at 0 in
+  a warehouse without history.
+- Batch read for store keeper and cashier: ERPNext 16.5x `get_batch_qty` checks Batch select as the user, which
+  blocked the cashier's settlement submit.
+- The permission drift check compares the standard rules with a baseline taken when they were copied, and reports
+  each change once. Rules other apps add as Custom DocPerm (ERPNext 16.5x adds Accounts Manager read on Address) are
+  not drift.
+- The desktop icon is imported only on the icon-grid desktop in Frappe 16.5x (test adjusted; the workspace and
+  sidebar are unchanged).
+- Full suite: 133/133 on the live versions (16.32 / 16.33) and on the v16 head.
+
+Install / uninstall:
+- `before_uninstall` removes the Mobile Sales role rules, every permission copy still equal to the standard rules,
+  the settlement workflow and the agents' User Permissions.
+- A fresh install, the setup checklist, a full day, the standard SO → DN → SI → PE as an office user, and uninstall
+  (nothing left but the four roles; the office flow still works) were checked on a disposable site.
+
+Phone:
+- Today without a trip: one "No trip loaded" heading, "Ask the store keeper to load your van.", and the last trip
+  ("Last trip MTRIP-… · Settled · sales …").
+
+20:00 Day Report email: skipped (one log line, nothing queued) while the site has no default outgoing Email Account.
+
+Performance (10 agents × 60 days × 30 visits; docs/PERFORMANCE.md): PERF_SUMMARY
+
+Docs: ADMIN_GUIDE, USER_GUIDE_AGENT, USER_GUIDE_STORE_CASHIER, QUICK_START, DEFERRED, SECURITY_REVIEW, PERFORMANCE;
+SPEC acceptance tests ticked with the tests that prove them. Tools: mobilesales/perf (seed, timings, install_check).
+
 ## v0.7.0 — Phase 6: reports, Mobile Trip Day Report, workspace
 
 - Reports (Script Reports, module Mobile Sales; ref_doctype Mobile Trip; filters company, dates, agent, vehicle, route, territory):

@@ -18,7 +18,8 @@ from frappe.utils import add_days, flt, nowdate
 from mobilesales.perf.seed import guard
 
 PREFIX = "MS2"
-STORE, CASHIER, SUPERVISOR, AGENT = (f"ms2.{r}@example.com" for r in ("store", "cashier", "supervisor", "agent"))
+STORE, CASHIER, SUPERVISOR, AGENT, OFFICE = (f"ms2.{r}@example.com" for r in ("store", "cashier", "supervisor", "agent", "office"))
+OFFICE_ROLES = ("Sales User", "Sales Manager", "Stock User", "Stock Manager", "Accounts User", "Accounts Manager")
 MOBILE_FIELDS = ("mobile_trip", "customer_visit", "is_mobile_sale", "mobile_purpose", "mobile_settlement")
 EXTENDED_DOCTYPES = ("Customer", "Item", "UOM", "Price List", "Item Price", "Batch", "Contact", "Address", "Territory",
 	"Customer Group", "Sales Invoice", "Payment Entry", "Account", "Serial and Batch Bundle")  # fmt: skip
@@ -166,19 +167,23 @@ def settle(trip_name):
 
 
 def standard_flow():
-	"""Standard office sales and stock, untouched by the app (installed or not)."""
+	"""Standard office sales and stock, untouched by the app (installed or not), as an office user with the standard
+	Sales / Stock / Accounts roles (Administrator would bypass the permissions)."""
 	guard()
 	frappe.set_user("Administrator")
 	co, store = company(), store_wh()
 	item = f"{PREFIX} Office Item"
 	if not frappe.db.exists("Item", item):
 		frappe.get_doc({"doctype": "Item", "item_code": item, "item_name": item, "item_group": leaf("Item Group"), "stock_uom": "Nos", "is_stock_item": 1}).insert()
+	user(OFFICE, OFFICE_ROLES)
+	frappe.db.commit()
+	frappe.set_user(OFFICE)
 	se = frappe.get_doc({"doctype": "Stock Entry", "stock_entry_type": "Material Receipt", "company": co,
 		"items": [{"item_code": item, "qty": 10, "t_warehouse": store, "basic_rate": 80}]}).insert()  # fmt: skip
 	se.submit()
 	customer = frappe.db.get_value("Customer", {"customer_name": f"{PREFIX} Office Customer"}) or frappe.get_doc(
 		{"doctype": "Customer", "customer_name": f"{PREFIX} Office Customer", "customer_group": leaf("Customer Group"), "territory": leaf("Territory")}
-	).insert().name
+	).insert(ignore_permissions=True).name  # master data: not what this checks
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 	from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
 	from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice as dn_to_si
@@ -201,7 +206,8 @@ def standard_flow():
 		"items": [{"item_code": item, "qty": 1, "s_warehouse": store, "t_warehouse": frappe.db.get_value("Warehouse", {"company": co, "warehouse_name": "Finished Goods"})}]}).insert()  # fmt: skip
 	transfer.submit()
 	frappe.db.commit()
-	ok(f"standard flow: SE {se.name}, SO {so.name} -> DN {dn.name} -> SI {si.name} -> PE {pe.name}, transfer {transfer.name}")
+	frappe.set_user("Administrator")
+	ok(f"standard flow as {OFFICE}: SE {se.name}, SO {so.name} -> DN {dn.name} -> SI {si.name} -> PE {pe.name}, transfer {transfer.name}")
 
 
 def races():
@@ -299,7 +305,13 @@ def after_uninstall():
 	perms = {dt: frappe.db.count("Custom DocPerm", {"parent": dt, "role": ["like", "Mobile Sales%"]}) for dt in EXTENDED_DOCTYPES}
 	copies = {dt: frappe.db.count("Custom DocPerm", {"parent": dt}) for dt in EXTENDED_DOCTYPES}
 	workflow = frappe.db.exists("Workflow", "Mobile Settlement Approval")
-	print({"custom_fields": left_fields, "doctypes": left_doctypes, "roles": roles, "workspace": workspace, "workflow": workflow,
-		"mobile_role_perms": {k: v for k, v in perms.items() if v}, "custom_docperm_copies": {k: v for k, v in copies.items() if v}}, flush=True)  # fmt: skip
+	user_perms = frappe.db.count("User Permission", {"allow": ["in", ["Mobile Sales Agent", "Mobile Trip", "Customer Visit", "Mobile Settlement"]]})
+	report = {"custom_fields": left_fields, "doctypes": left_doctypes, "roles": roles, "workspace": workspace, "workflow": workflow,
+		"user_permissions": user_perms, "mobile_role_perms": {k: v for k, v in perms.items() if v},
+		"custom_docperm_copies": {k: v for k, v in copies.items() if v}}  # fmt: skip
+	print(report, flush=True)
+	assert not (left_fields or left_doctypes or workspace or workflow or user_perms or report["mobile_role_perms"]), report
+	assert not report["custom_docperm_copies"], report  # this site had no other Custom DocPerm
+	ok("after uninstall: no custom fields, DocTypes, workspace, workflow, User Permissions, role rules or permission copies left (the four roles stay)")
 	standard_flow()
 	ok("after uninstall: standard flow still works")

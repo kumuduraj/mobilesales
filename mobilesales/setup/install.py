@@ -2,7 +2,7 @@ import frappe
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 from frappe.model.naming import NamingSeries
 
-from mobilesales.setup.permissions import check_standard_permission_drift, ensure_agent_permissions
+from mobilesales.setup.permissions import check_standard_permission_drift, ensure_agent_permissions, remove_agent_permissions
 
 MOBILE_SINV_SERIES = "MB-SINV-.YY.-.#####"
 MOBILE_SRET_SERIES = "MB-SRET-.YY.-.#####"
@@ -51,6 +51,18 @@ def after_migrate():
 	add_mobile_invoice_series()
 	check_standard_permission_drift()  # first: compares with the rules in force before this migrate's copy
 	ensure_agent_permissions()
+
+
+def before_uninstall():
+	"""Run by `uninstall-app mobilesales` before the app's DocTypes are dropped. The standard DocTypes get their
+	standard permissions back and nothing is left pointing at the app's DocTypes. Data stays: submitted invoices,
+	payments, stock entries and journals remain as standard documents with their ledgers."""
+	remove_agent_permissions()
+	app_doctypes = frappe.get_all("DocType", filters={"module": "Mobile Sales"}, pluck="name")
+	for name in frappe.get_all("User Permission", filters={"allow": ["in", app_doctypes or [""]]}, pluck="name"):
+		frappe.delete_doc("User Permission", name, ignore_permissions=True)
+	for workflow in frappe.get_all("Workflow", filters={"document_type": ["in", app_doctypes or [""]]}, pluck="name"):
+		frappe.delete_doc("Workflow", workflow, ignore_permissions=True, force=True)
 
 
 def add_mobile_invoice_series():

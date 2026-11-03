@@ -64,9 +64,16 @@ Web workers recycle by themselves and load new code from disk, so new code must 
 
 ### Uninstall
 
-`bench --site <site> uninstall-app mobilesales` removes the app's DocTypes, custom fields, roles, workflow and
-print formats. Submitted Sales Invoices, Payment Entries, Stock Entries and Journal Entries stay, as standard
-documents, with their ledgers. Back up the site first. The step-by-step check is in §11.
+`bench --site <site> uninstall-app mobilesales` removes:
+- the app's DocTypes, custom fields, print formats, workspace, desktop icon and the settlement workflow;
+- the agents' User Permissions;
+- the Mobile Sales role rules on the 14 standard DocTypes. Where the remaining rules are exactly ERPNext's standard
+  ones, the copy is deleted too, so the standard permissions apply again. A copy someone has changed since is kept,
+  and named in the output.
+
+The four Mobile Sales roles stay (unassign them if you like). Submitted Sales Invoices, Payment Entries, Stock
+Entries and Journal Entries stay too, as standard documents with their ledgers. Back up the site first. The check
+that was run is in §11.
 
 ## 3. Setup checklist
 
@@ -230,10 +237,24 @@ Back up before every update: `bench --site <site> backup --with-files`. All auto
 
 ## 11. Uninstall check
 
-After `uninstall-app` on a copy of the site:
-- standard Sales Order → Delivery Note → Sales Invoice → Payment Entry and Stock Entry submit
-- no `mobile_*` custom fields are left on the four DocTypes
-- the 14 DocTypes still have their standard permissions (the Custom DocPerm copies are removed)
-- the workspace is gone
+The v1.0.0 check, on a disposable site (`mobilesales/perf/install_check.py`):
 
-This was checked on a disposable site for v1.0.0 (CHANGELOG).
+1. Fresh install, then the setup checklist above through the same buttons and roles.
+2. A full day: load, sale, return, shop closed, settlement through the workflow.
+3. Standard SO → DN → SI → PE and stock entries, as an office user (Sales / Stock / Accounts roles).
+4. The race tests (§12).
+5. `uninstall-app`. After it:
+   - no custom fields, DocTypes, workspace, workflow, User Permissions, role rules or permission copies are left
+     (the four roles stay);
+   - the office user's standard flow still works.
+
+## 12. Concurrency (what the server guarantees)
+
+Checked with real threads and separate database connections:
+
+- **Last stock:** two phones selling the last units at the same moment: one visit is recorded, the other gets
+  "Not enough … in van".
+- **Same visit sent twice:** the same visit (`client_ref`) sent twice at once: one visit; the second answer is
+  that same visit, marked as a duplicate.
+- **Settlement started twice:** "start settlement" twice at once (double tap, or the app and Desk): one
+  settlement.

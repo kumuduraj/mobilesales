@@ -264,3 +264,57 @@ class TestSecurity(SettlementTestBase):
 			self.assertEqual(reports.chart_sales_by_agent()["labels"], [])
 			with patch.dict(frappe.form_dict, {"visit": visit.name}), self.assertRaises(frappe.PermissionError):
 				mobile_sales_print.get_context(frappe._dict())
+
+	# The phone app still works under the tightened agent scope (Phase 7 live-run checklist)
+
+	def test_phone_journey_under_agent_scope(self):
+		country = frappe.get_cached_value("Company", self.company, "country")
+		contact = frappe.get_doc({"doctype": "Contact", "first_name": f"{PREFIX} Owner", "is_primary_contact": 1,
+			"phone_nos": [{"phone": "0771112223", "is_primary_mobile_no": 1}],
+			"links": [{"link_doctype": "Customer", "link_name": self.customer}]}).insert().name  # fmt: skip
+		address = frappe.get_doc({"doctype": "Address", "address_title": f"{PREFIX} Shop", "address_type": "Billing", "is_primary_address": 1,
+			"address_line1": "1 Main St", "city": "Kandy", "country": country,
+			"links": [{"link_doctype": "Customer", "link_name": self.customer}]}).insert().name  # fmt: skip
+		frappe.db.set_value("Customer", self.customer, {"customer_primary_contact": contact, "customer_primary_address": address})
+		frappe.get_doc({"doctype": "Address", "address_title": f"{PREFIX} Company", "address_type": "Billing", "is_your_company_address": 1,
+			"address_line1": "HQ", "city": "Colombo", "country": country,
+			"links": [{"link_doctype": "Company", "link_name": self.company}]}).insert()  # fmt: skip
+		delivered = frappe.get_doc({"doctype": "Sales Invoice", "company": self.company, "customer": self.customer, "update_stock": 0,
+			"items": [{"item_code": self.plain_item, "qty": 1, "rate": 90}]}).insert()  # fmt: skip
+		delivered.submit()
+		unpriced = self.make_item(f"{PREFIX} No Price Item")
+		make_receipt(self.company, unpriced, 2, self.store)
+		trip = self.run_trip([(self.plain_item, 4), (unpriced, 1)], end_day=False)
+
+		with as_user(self.agent_a.user):
+			card = api.get_customer(self.customer)  # customer details: contact and address shown
+			self.assertEqual((card["contact"]["mobile_no"], card["address"]["city"]), ("0771112223", "Kandy"))
+			created = api.create_customer({"customer_name": f"{PREFIX} New Shop", "mobile_no": "0779998887", "address_line1": "2 Hill Rd", "city": "Galle"})
+			self.assertFalse(created["existing"])
+			stock = {r.item_code: r for r in api.get_van_stock(trip.name)}
+			self.assertEqual(set(stock), {self.plain_item, unpriced})
+			priced = api.price_cart(trip.name, self.customer, [{"item_code": self.plain_item, "qty": 2}])
+			self.assertEqual(priced["lines"][0]["price_list_rate"], 100)  # price shown
+			with self.assertRaisesRegex(frappe.ValidationError, "has no price in price list"):
+				api.price_cart(trip.name, self.customer, [{"item_code": unpriced, "qty": 1}])
+			with self.assertRaisesRegex(frappe.ValidationError, "delivered with a Delivery Note"):
+				api.price_cart(trip.name, self.customer, [], returns_items=[{"item_code": self.plain_item, "qty": 1,
+					"against_invoice": delivered.name, "return_reason": "Damaged", "condition": "Damaged"}])  # fmt: skip
+			sale = api.submit_visit({"client_ref": "sec-journey-1", "mobile_trip": trip.name, "customer": self.customer, "outcome": "Sale",
+				"sale_items": [{"item_code": self.plain_item, "qty": 2}], "collect_amount": priced["due_on_sale"], "update_customer": 1,
+				"new_mobile_no": "0771112224", "new_city": "Kandy 2"})  # fmt: skip — details edited on the visit
+			back = api.submit_visit({"client_ref": "sec-journey-2", "mobile_trip": trip.name, "customer": self.customer, "outcome": "Return Only",
+				"return_items": [{"item_code": self.plain_item, "qty": 1, "against_invoice": sale["sales_invoice"], "return_reason": "Damaged", "condition": "Damaged"}]})  # fmt: skip
+			invoice = frappe.get_doc("Sales Invoice", sale["sales_invoice"])
+			self.assertEqual((invoice.customer_address, invoice.contact_person), (address, contact))
+			for doctype, name, print_format in (("Customer Visit", sale["name"], "Mobile Visit Bill"), ("Sales Invoice", sale["sales_invoice"], "Mobile Invoice 4in"),
+					("Sales Invoice", back["credit_notes"], "Mobile Return Note"), ("Payment Entry", sale["payment_entry"], "Mobile Collection Receipt")):  # fmt: skip
+				self.assertIn(name, frappe.get_print(doctype, name, print_format=print_format), print_format)
+			history = api.get_visits(trip.name)  # History: both visits, reprintable
+			self.assertEqual({v.name for v in history}, {sale["name"], back["name"]})
+			self.assertTrue(frappe.has_permission("Sales Invoice", "print", doc=sale["sales_invoice"]))
+			day = api.get_my_day(trip.name)
+			self.assertEqual((day["visits"], day["invoices"]), (2, 1))
+			self.assertTrue(run_report("Mobile Trip Day Report", {"mobile_trip": trip.name})["result"])
+		changes = {c.field_key: c.new_value for c in frappe.get_doc("Customer Visit", sale["name"]).changes}
+		self.assertEqual(changes, {"contact.mobile_no": "0771112224", "address.city": "Kandy 2"})
