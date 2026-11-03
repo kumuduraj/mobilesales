@@ -54,7 +54,16 @@ Bluetooth printing on the van's 4-inch printer through the Evonet Android print 
 - **To do:** HRMS isn't installed on agrosys. When it is, turn the recovery balance into salary deductions
   (Additional Salary / loan), with the supervisor's approval per settlement.
 
-## 7. Outgoing email and real supervisor users (agrosys)
+## 7. Van returns against invoices delivered with a Delivery Note
+
+- **Now (decision 2026-11-03):** an invoice made from a Delivery Note (SO → DN → SI, `update_stock` off) moved no stock
+  itself, so ERPNext doesn't accept a stock credit note against it. The van's return pickers leave such invoices out,
+  and a return against one is refused with "delivered with a Delivery Note; return these goods at the office". The
+  office takes the return in Desk (Delivery Note return, then its credit note).
+- **To do:** take these returns from the van too, by creating a Delivery Note return into the customer return
+  warehouse and the credit note against the invoice, set off like other van returns and counted at settlement.
+
+## 8. Outgoing email and real supervisor users (agrosys)
 
 - **Now:** the 20:00 Day Report email is switched on in Mobile Sales Settings, but agrosys has no Email Account,
   so the job skips every evening (one log line, nothing queued). The only supervisor user is the disabled pilot
