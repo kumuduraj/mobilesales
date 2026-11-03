@@ -157,3 +157,68 @@ def settlement_has_permission(doc, ptype: str | None = None, user: str | None = 
 	if not agent:
 		return doc.is_new()
 	return _agent_user(agent) == user
+
+
+# Masters agents read while ERPNext builds their invoices (setup/permissions.py) also hold office data. Restricted
+# agents see selling prices only, Contacts / Addresses of customers only, their own Serial and Batch Bundles, and
+# receivable accounts or their own cash account in link searches (the select right ERPNext checks stays).
+
+
+def item_price_query_conditions(user: str | None = None) -> str:
+	if not is_restricted_agent(user or frappe.session.user):
+		return ""
+	return "`tabItem Price`.`selling` = 1"
+
+
+def item_price_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
+	if not is_restricted_agent(user or frappe.session.user):
+		return True
+	return bool(doc.get("selling"))
+
+
+def _customer_linked_sql(doctype: str) -> str:
+	return (
+		"exists (select 1 from `tabDynamic Link` dl where dl.`parenttype` = {0} and dl.`parent` = `tab{1}`.`name`"
+		" and dl.`link_doctype` = 'Customer')"
+	).format(frappe.db.escape(doctype), doctype)
+
+
+def contact_query_conditions(user: str | None = None) -> str:
+	if not is_restricted_agent(user or frappe.session.user):
+		return ""
+	return _customer_linked_sql("Contact")
+
+
+def address_query_conditions(user: str | None = None) -> str:
+	if not is_restricted_agent(user or frappe.session.user):
+		return ""
+	return _customer_linked_sql("Address")
+
+
+def customer_linked_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
+	if not is_restricted_agent(user or frappe.session.user) or doc.is_new():
+		return True
+	return any(link.link_doctype == "Customer" for link in doc.get("links") or [])
+
+
+def bundle_query_conditions(user: str | None = None) -> str:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return ""
+	return f"`tabSerial and Batch Bundle`.`owner` = {frappe.db.escape(user)}"
+
+
+def bundle_has_permission(doc, ptype: str | None = None, user: str | None = None) -> bool:
+	"""ERPNext creates and submits the bundles of the agent's sales and credit notes as the agent."""
+	user = user or frappe.session.user
+	if not is_restricted_agent(user) or doc.is_new():
+		return True
+	return doc.owner == user
+
+
+def account_query_conditions(user: str | None = None) -> str:
+	user = user or frappe.session.user
+	if not is_restricted_agent(user):
+		return ""
+	own_cash = f"(select `cash_account` from `tabMobile Sales Agent` where `user` = {frappe.db.escape(user)})"
+	return f"(`tabAccount`.`account_type` = 'Receivable' or `tabAccount`.`name` in {own_cash})"

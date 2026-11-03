@@ -20,7 +20,9 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 - 14 DocTypes use Custom DocPerm copies (made by mobilesales/setup/permissions.py to give Mobile Sales roles
   access): Customer, Item, UOM, Price List, Item Price, Batch, Contact, Address, Territory, Customer Group,
   Sales Invoice, Payment Entry, Account, Serial and Batch Bundle. After every ERPNext upgrade check migrate output / Error Log for
-  the mobilesales permission warning ("mobilesales: standard permissions changed for <DocType>").
+  the mobilesales permission warning ("mobilesales: standard permissions changed for <DocType>"): it compares the
+  standard DocPerms with a baseline taken at copy time and reports each change once. uninstall-app removes the
+  role rules and every copy still equal to the standard rules (before_uninstall).
 
 ## Non-negotiable rules
 1. NEVER modify apps/frappe, apps/erpnext or any other app. Before every commit:
@@ -43,6 +45,8 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     with restart_supervisor_on_update=true they call sudo supervisorctl and fail. Use:
     - new code from GitHub: git clone into apps/mobilesales + ./env/bin/pip install -e apps/mobilesales
     - apps.txt edits by hand (keep trailing newline), then ask Raj to restart immediately.
+    `bench get-app` on a throwaway bench in /tmp also ends with `supervisorctl restart <bench>:` (it reached
+    supervisord in Phase 7; the group did not exist). Add apps there by git clone + pip install -e too.
 12. Never git checkout/reset/switch commits inside apps/mobilesales while the site is running.
     For checking old commits use `git worktree add /tmp/<name> <commit>` and remove it after.
 13. Every business-flow test runs as the real role user (agent / store keeper / cashier / supervisor) via
@@ -78,9 +82,27 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
     new files from disk. If the agrosys migrate cannot run, revert the working tree to the last migrated commit
     (git stash / worktree) — never leave agrosys running code ahead of its schema.
 
+20. Phase work (from Phase 7): a feature branch in a /tmp worktree
+    (`git worktree add -b feat/<name> /tmp/ms_pN origin/develop`). Tests run the worktree code on mstest.local:
+    `PYTHONPATH=/tmp/ms_pN bench --site mstest.local clear-cache` (after a hooks change), then
+    `PYTHONPATH=/tmp/ms_pN bench --site mstest.local run-tests --app mobilesales`; a schema change is migrated the same
+    way on mstest.local only. apps/mobilesales and agrosys change only at release (fresh clone, migrate). A release
+    that adds hook functions (doc_events, permission hooks, scheduler) needs Raj's restart straight after the
+    agrosys migrate: old workers resolve the new hook names against modules already in memory.
+21. Commit-only checks (real threads, races, install / uninstall) run on a disposable site (mst2.local) through
+    mobilesales/perf/*, never in the rollback suite and never on agrosys. mobilesales/perf/seed.py is the
+    performance volume (own company "_MS Perf Co"); restore mstest.local from its pre-seed backup afterwards.
+22. mstest.local / mst2.local scheduler always disabled; check before any long-running job
+    (`bench --site mstest.local scheduler status`). Their jobs would run on the shared AgroPublic workers. After a
+    restore or a new site, disable it again. The scheduler flag does not stop jobs a command enqueues itself:
+    migrate test sites with `bench --site mstest.local migrate --skip-search-index`. Long jobs (seed, profiling) run under `nice -n 10 ionice -c3`, not
+    08:00–18:00 Colombo if agrosys / Gills response times measurably suffer (check /api/method/ping before and
+    during), and pause if available memory falls below 1 GB.
+
 ## Definition of done for EVERY task
 1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.
-2. Tests on mstest.local only: rule 15 leftover check, then `bench --site mstest.local run-tests --app mobilesales`.
+2. Tests on mstest.local only: rule 15 leftover check, then `bench --site mstest.local run-tests --app mobilesales`
+   (with PYTHONPATH to the worktree during a phase, rule 20).
    Never run-tests on agrosys.evonet.lk.
 3. Fixture-type record changed → `bench --site agrosys.evonet.lk export-fixtures --app mobilesales`.
 4. Frontend changed → `cd frontend && yarn build` (runs the SPA mount test first, rule 18; never skip it).

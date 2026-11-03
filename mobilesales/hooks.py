@@ -93,6 +93,7 @@ jinja = {
 # before_install = "mobilesales.install.before_install"
 after_install = "mobilesales.setup.install.after_install"
 after_migrate = ["mobilesales.setup.install.after_migrate"]
+before_uninstall = "mobilesales.setup.install.before_uninstall"
 
 # Fixtures
 # --------
@@ -200,6 +201,11 @@ permission_query_conditions = {
 	"Sales Invoice": "mobilesales.overrides.permissions.sales_invoice_query_conditions",
 	"Payment Entry": "mobilesales.overrides.permissions.payment_entry_query_conditions",
 	"Mobile Settlement": "mobilesales.overrides.permissions.settlement_query_conditions",
+	"Item Price": "mobilesales.overrides.permissions.item_price_query_conditions",
+	"Contact": "mobilesales.overrides.permissions.contact_query_conditions",
+	"Address": "mobilesales.overrides.permissions.address_query_conditions",
+	"Serial and Batch Bundle": "mobilesales.overrides.permissions.bundle_query_conditions",
+	"Account": "mobilesales.overrides.permissions.account_query_conditions",
 }
 
 has_permission = {
@@ -209,6 +215,10 @@ has_permission = {
 	"Sales Invoice": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
 	"Payment Entry": "mobilesales.overrides.permissions.mobile_voucher_has_permission",
 	"Mobile Settlement": "mobilesales.overrides.permissions.settlement_has_permission",
+	"Item Price": "mobilesales.overrides.permissions.item_price_has_permission",
+	"Contact": "mobilesales.overrides.permissions.customer_linked_has_permission",
+	"Address": "mobilesales.overrides.permissions.customer_linked_has_permission",
+	"Serial and Batch Bundle": "mobilesales.overrides.permissions.bundle_has_permission",
 }
 
 # Document Events

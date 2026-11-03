@@ -142,7 +142,8 @@ class TestMobileAPI(MobileSalesTestCase):
 		self.assertEqual(set(boot), {"csrf_token", "site_name", "lang", "translations", "context"})
 		self.assertEqual(boot["translations"], {})  # English: no Desk message set in the page
 		self.assertEqual(
-			set(boot["context"]), {"user", "full_name", "agent", "trip", "settings", "no_sale_reasons", "return_reasons", "denominations"}
+			set(boot["context"]),
+			{"user", "full_name", "agent", "trip", "last_trip", "settings", "no_sale_reasons", "return_reasons", "denominations"},
 		)
 		self.assertIn("window.ms_fail", html)  # on-screen "App failed to load" instead of a blank page
 		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
@@ -201,6 +202,15 @@ class TestMobileAPI(MobileSalesTestCase):
 			api.submit_visit({"client_ref": "r-1", "mobile_trip": trip.name, "customer": self.customer, "outcome": "No Sale", "no_sale_reason": self.reason})
 			(row,) = api.get_route_plan(trip.name)
 			self.assertTrue(row.visited)
+			self.assertIsNone(ctx["last_trip"])  # an open trip: no "last trip" line
+
+		frappe.db.set_value("Mobile Trip", trip.name, {"status": "Settled", "invoiced_amount": 4536})  # test-only shortcut
+		with as_user(self.agent_a.user):
+			ctx = api.get_context()
+		self.assertIsNone(ctx["trip"])
+		self.assertEqual((ctx["last_trip"].name, ctx["last_trip"].status, ctx["last_trip"].invoiced_amount), (trip.name, "Settled", 4536))
+		with as_user(self.agent_b.user):
+			self.assertIsNone(api.get_context()["last_trip"])  # never another agent's trip
 
 	def test_search_and_customer_card(self):
 		trip = self.load_trip(self.agent_a)
@@ -342,8 +352,8 @@ class TestMobileAPI(MobileSalesTestCase):
 			self.assertEqual((submitted["workflow_state"], submitted["editable"]), ("Pending Store", False))
 			with self.assertRaisesRegex(frappe.ValidationError, "can no longer be changed"):
 				api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 1}]})
-			with self.assertRaisesRegex(frappe.ValidationError, "already Pending Store"):
-				api.submit_settlement_for_verification(saved["name"])
+			again = api.submit_settlement_for_verification(saved["name"])  # double tap / retry after a timeout
+			self.assertEqual((again["workflow_state"], again["duplicate"], submitted["duplicate"]), ("Pending Store", True, False))
 
 	# printing
 

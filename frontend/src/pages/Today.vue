@@ -2,7 +2,10 @@
 	<div class="space-y-3">
 		<div v-if="!trip" class="card text-center">
 			<div class="text-lg font-semibold">{{ __("No trip loaded") }}</div>
-			<p class="mt-1 text-gray-600">{{ __("No trip loaded — ask the store keeper to load your van.") }}</p>
+			<p class="mt-1 text-gray-600">{{ __("Ask the store keeper to load your van.") }}</p>
+			<p v-if="lastTrip" class="mt-3 text-sm text-gray-500" data-last-trip>
+				{{ __("Last trip") }} {{ lastTrip.name }} · {{ __(lastTrip.status) }} · {{ __("sales") }} {{ money(lastTrip.invoiced_amount) }}
+			</p>
 			<button class="btn-secondary mt-4 w-full" :disabled="busy" @click="refresh">{{ __("Check again") }}</button>
 		</div>
 
@@ -87,6 +90,7 @@ import { money, online, qty, session } from "../state"
 import { __ } from "../translation"
 
 const trip = computed(() => session.ctx?.trip)
+const lastTrip = computed(() => session.ctx?.last_trip)
 const stock = ref([])
 const myDay = ref(null)
 // until get_my_day answers, the trip's own summary keeps the card filled

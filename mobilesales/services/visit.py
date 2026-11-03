@@ -8,12 +8,14 @@ from frappe import _
 from frappe.utils import flt, get_datetime, getdate
 
 from mobilesales.overrides.permissions import COLLECTABLE_FLAG
-from mobilesales.services import customer_update, invoicing, returns, stock
+from mobilesales.services import customer_update, invoicing, returns, stock, vouchers
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
 
 SUPERVISOR_ROLES = ("Mobile Sales Supervisor", "System Manager")
 NO_SALE_OUTCOMES = ("No Sale", "Shop Closed")
+# Set by on_submit only (db_set): never from the client, a REST save or an amendment.
+VOUCHER_LINKS = ("sales_invoice", "payment_entry", "credit_journal", "credit_notes")
 
 
 # Document events
@@ -22,6 +24,8 @@ NO_SALE_OUTCOMES = ("No Sale", "Shop Closed")
 def validate_visit(visit):
 	trip, agent = invoicing.get_visit_context(visit)
 	settings = ms_settings.get_settings()
+	for fieldname in VOUCHER_LINKS:  # validate runs before submit only, so these are never ours yet
+		visit.set(fieldname, None)
 	visit.client_ref = (visit.client_ref or "").strip() or None  # unique: empty must be NULL
 	visit.agent = trip.agent
 	visit.company = trip.company
@@ -239,15 +243,11 @@ def before_cancel(visit):
 def on_cancel(visit):
 	"""Payment Entry, set-off Journal Entry, credit notes, then the Sales Invoice (stock returns to the van)."""
 	credit_notes = [n.strip() for n in (visit.credit_notes or "").split(",") if n.strip()]
-	chain = [("Payment Entry", visit.payment_entry), ("Journal Entry", visit.credit_journal)]
-	chain += [("Sales Invoice", name) for name in credit_notes] + [("Sales Invoice", visit.sales_invoice)]
-	for doctype, name in chain:
-		if not name:
-			continue
-		doc = frappe.get_doc(doctype, name)
-		if doc.docstatus == 1:
-			doc.flags.ignore_permissions = True
-			doc.cancel()
+	own = {"mobile_trip": visit.mobile_trip, "customer_visit": visit.name}
+	vouchers.cancel_linked("Payment Entry", visit.payment_entry, **own)
+	vouchers.cancel_linked("Journal Entry", visit.credit_journal, mobile_trip=visit.mobile_trip)
+	for name in [*credit_notes, visit.sales_invoice]:
+		vouchers.cancel_linked("Sales Invoice", name, **own)
 	trip_service.update_trip_summary(visit.mobile_trip)
 
 

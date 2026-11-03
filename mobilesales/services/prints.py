@@ -31,15 +31,20 @@ def set_offs(reference: str) -> list:
 	return [p for journal in journals for p in journal_pairs(journal) if reference in (p.credit_note, p.invoice)]
 
 
-def journal_pairs(journal: str) -> list:
+JOURNAL_ROW_FIELDS = ["parent", "reference_name", "debit_in_account_currency", "credit_in_account_currency"]
+
+
+def journal_pairs(journal: str, rows=None) -> list:
 	"""Pair the journal's debit rows (credit notes) with its credit rows (invoices paid), first in first out:
-	ours are written Dr note / Cr invoice per set-off, ERPNext's reconciliation one pair per entry."""
-	rows = frappe.get_all(
-		"Journal Entry Account",
-		filters={"parent": journal, "reference_type": "Sales Invoice"},
-		fields=["reference_name", "debit_in_account_currency", "credit_in_account_currency"],
-		order_by="idx asc",
-	)
+	ours are written Dr note / Cr invoice per set-off, ERPNext's reconciliation one pair per entry. `rows`: the
+	journal's Sales Invoice rows in idx order when the caller loaded them already (JOURNAL_ROW_FIELDS)."""
+	if rows is None:
+		rows = frappe.get_all(
+			"Journal Entry Account",
+			filters={"parent": journal, "reference_type": "Sales Invoice"},
+			fields=JOURNAL_ROW_FIELDS,
+			order_by="idx asc",
+		)
 	debits = [[r.reference_name, flt(r.debit_in_account_currency)] for r in rows if flt(r.debit_in_account_currency) > 0]
 	credits = [[r.reference_name, flt(r.credit_in_account_currency)] for r in rows if flt(r.credit_in_account_currency) > 0]
 	pairs = []

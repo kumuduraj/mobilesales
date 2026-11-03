@@ -4,6 +4,7 @@
 from frappe.model.document import Document
 
 from mobilesales.services import trip as trip_service
+from mobilesales.services import vouchers
 
 
 class MobileTrip(Document):
@@ -15,6 +16,9 @@ class MobileTrip(Document):
 
 	def on_submit(self):
 		trip_service.on_submit(self)
+
+	def before_update_after_submit(self):
+		vouchers.keep_system_fields(self, trip_service.SYSTEM_FIELDS)
 
 	def before_cancel(self):
 		trip_service.before_cancel(self)

@@ -273,6 +273,22 @@ class TestReports(SettlementTestBase):
 		(no_sale,) = self.run_as(SUPERVISOR, "No Sale Reason Analysis")
 		self.assertEqual((no_sale["reason"], no_sale["count"], no_sale["visits"], no_sale["pct"]), (self.reason, 1, 4, 25))
 
+	def test_trips_loaded_together_equal_one_by_one(self):
+		"""The reports load up to CHUNK trips with one query per table: each trip gets exactly its own documents,
+		the same as loaded alone, whatever the chunk size."""
+		self.seed()
+		other = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]], agent=self.agent_b)
+		with as_user(SUPERVISOR):
+			trips = reports.trip_rows({"company": self.company})
+			self.assertLessEqual({self.trip.name, other.name}, {t.name for t in trips})
+			together = reports.trips_documents(trips)
+			for trip in trips:
+				self.assertEqual(together[trip.name], reports.trip_documents(trip.name), trip.name)
+			self.assertEqual(len(together[other.name].visits), 1)
+			rows = reports.trip_summary_rows({"company": self.company})
+			with patch.object(reports, "CHUNK", 1):
+				self.assertEqual(reports.trip_summary_rows({"company": self.company}), rows)
+
 	def test_day_report_pdf_email_and_my_day(self):
 		done = self.seed()
 		# queued on submit, after the commit
@@ -316,8 +332,13 @@ class TestReports(SettlementTestBase):
 		with patch("frappe.sendmail") as sendmail, patch("frappe.utils.pdf.get_pdf", return_value=blank_pdf()):
 			self.assertIsNone(day_report.send_daily_reports())
 			self.set_setting("daily_report_email", 1)
-			self.assertIsNone(day_report.send_daily_reports(add_days(nowdate(), 1)))
-			self.assertEqual(day_report.send_daily_reports(), [done.name])
+			# switched on, but no outgoing email account yet (agrosys today): skipped, nothing queued
+			with patch.object(day_report, "outgoing_email_ready", return_value=False):
+				self.assertIsNone(day_report.send_daily_reports())
+			sendmail.assert_not_called()
+			with patch.object(day_report, "outgoing_email_ready", return_value=True):
+				self.assertIsNone(day_report.send_daily_reports(add_days(nowdate(), 1)))
+				self.assertEqual(day_report.send_daily_reports(), [done.name])
 		sendmail.assert_called_once()
 		mail = sendmail.call_args.kwargs
 		self.assertIn(frappe.db.get_value("User", SUPERVISOR, "email"), mail["recipients"])
@@ -390,4 +411,9 @@ class TestReports(SettlementTestBase):
 		self.assertIn("Mobile Visit Rejection", [s.link_to for s in workspace.shortcuts])
 		self.assertEqual(len(workspace.number_cards), 7)
 		self.assertEqual(len(workspace.charts), 4)
-		self.assertEqual(frappe.db.get_value("Desktop Icon", "Mobile Sales", ["link_type", "link_to", "hidden"]), ("Workspace Sidebar", "Mobile Sales", 0))
+		try:  # Frappe v16.5x: app icons are imported only on the icon-grid desktop (new sites start module-first)
+			from frappe.desk.doctype.desktop_settings.desktop_settings import is_desktop_icons_page
+		except ImportError:
+			is_desktop_icons_page = lambda: True  # noqa: E731
+		if is_desktop_icons_page():
+			self.assertEqual(frappe.db.get_value("Desktop Icon", "Mobile Sales", ["link_type", "link_to", "hidden"]), ("Workspace Sidebar", "Mobile Sales", 0))

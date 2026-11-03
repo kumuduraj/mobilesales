@@ -89,10 +89,17 @@ def _resolve_row(visit, row, used):
 		return
 
 	invoice = frappe.db.get_value(
-		"Sales Invoice", row.against_invoice, ["customer", "company", "docstatus", "is_return"], as_dict=True
+		"Sales Invoice", row.against_invoice, ["customer", "company", "docstatus", "is_return", "update_stock"], as_dict=True
 	)
 	if not invoice or invoice.docstatus != 1 or invoice.is_return:
 		frappe.throw(_("Return row {0}: {1} is not a submitted Sales Invoice.").format(row.idx, row.against_invoice))
+	if not invoice.update_stock:
+		# ERPNext takes such returns through the Delivery Note, not a stock credit note
+		frappe.throw(
+			_("Return row {0}: Sales Invoice {1} was delivered with a Delivery Note; return these goods at the office.").format(
+				row.idx, frappe.bold(row.against_invoice)
+			)
+		)
 	if invoice.customer != visit.customer or invoice.company != visit.company:
 		frappe.throw(
 			_("Return row {0}: Sales Invoice {1} does not belong to customer {2}.").format(
@@ -283,6 +290,8 @@ def _credit_note(visit, agent, settings, invoice, rows):
 					"warehouse": warehouse,
 				}
 			)
+			if not invoice:
+				item.incoming_rate = standalone_cost(row, trip, settings)
 	note.calculate_taxes_and_totals()
 
 	items = iter(note.items)
@@ -296,6 +305,22 @@ def _credit_note(visit, agent, settings, invoice, rows):
 		row.amount = flt(amount, row.precision("amount"))
 		row.stock_qty = stock_qty
 	return note
+
+
+def standalone_cost(row, trip, settings) -> float:
+	"""Stock value per stock unit of a return without an invoice: the van's valuation, else the source store's, else
+	the Item's. ERPNext v16.5x no longer guesses one for a stand-alone credit note into a warehouse with no history
+	(the customer return warehouse) and refuses the note; such a return is never posted at 0."""
+	for warehouse in (trip.van_warehouse, settings.source_warehouse):
+		rate = warehouse and frappe.db.get_value("Bin", {"item_code": row.item_code, "warehouse": warehouse}, "valuation_rate")
+		if flt(rate):
+			return flt(rate)
+	rate = flt(frappe.db.get_value("Item", row.item_code, "valuation_rate"))
+	if not rate:
+		frappe.throw(
+			_("Return row {0}: {1} has no stock value yet; choose the invoice it was sold on.").format(row.idx, frappe.bold(row.item_code))
+		)
+	return rate
 
 
 def _batch_info(note, row) -> str:

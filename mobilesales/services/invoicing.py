@@ -78,6 +78,7 @@ def build_invoice(visit, save=False):
 		si.set("taxes", [])
 		si.set_taxes()
 	si.calculate_taxes_and_totals()  # pricing rules only: the base for the agent's manual discount
+	check_prices(si)
 	apply_manual_discounts(visit, si)
 
 	if save:
@@ -86,6 +87,20 @@ def build_invoice(visit, save=False):
 		si.insert()
 		si.submit()
 	return si
+
+
+def check_prices(si):
+	"""Never sell at 0 because an item has no price (missing Item Price, or one not valid yet on the visit
+	date). A pricing rule that makes a line free is the office's decision and stays allowed."""
+	for item in si.items:
+		if item.get("is_free_item") or flt(item.price_list_rate) or flt(item.rate) or item.get("pricing_rules"):
+			continue
+		frappe.throw(
+			_("{0} has no price in price list {1} on {2}; ask the office to add one.").format(
+				frappe.bold(item.item_code), frappe.bold(si.selling_price_list), frappe.format(si.posting_date, "Date")
+			),
+			title=_("No price"),
+		)
 
 
 def apply_manual_discounts(visit, si):

@@ -1,6 +1,8 @@
 """Phase 3: Customer Visit outcomes, customer updates, invoicing, collection, cancel chain,
 mobile voucher guards, agent permissions on standard DocTypes and naming series."""
 
+from collections import Counter
+
 import frappe
 from frappe.utils import flt, now_datetime, nowdate
 
@@ -425,10 +427,12 @@ class TestCustomerVisit(MobileSalesTestCase):
 	# 12
 	def test_permission_integrity_for_existing_roles(self):
 		for doctype, managed in ROLE_PERMISSIONS.items():
-			standard = sorted(tuple(p.get(r) for r in ("role", *RIGHTS)) for p in frappe.get_all("DocPerm", filters={"parent": doctype}, fields=["role", *RIGHTS]))
+			standard = [tuple(p.get(r) for r in ("role", *RIGHTS)) for p in frappe.get_all("DocPerm", filters={"parent": doctype}, fields=["role", *RIGHTS]) if p.role not in managed]
 			custom = frappe.get_all("Custom DocPerm", filters={"parent": doctype}, fields=["role", *RIGHTS])
-			kept = sorted(tuple(p.get(r) for r in ("role", *RIGHTS)) for p in custom if p.role not in managed)
-			self.assertEqual(kept, standard, doctype)
+			kept = [tuple(p.get(r) for r in ("role", *RIGHTS)) for p in custom if p.role not in managed]
+			# every standard rule is kept exactly; rules other apps add as Custom DocPerm (ERPNext v16.5x adds
+			# Accounts Manager on Address) may sit beside them
+			self.assertFalse(Counter(standard) - Counter(kept), doctype)
 			for role, rights in managed.items():
 				rules = [p for p in custom if p.role == role]
 				self.assertEqual(len(rules), 1, (doctype, role))
@@ -444,14 +448,22 @@ class TestCustomerVisit(MobileSalesTestCase):
 			lambda: frappe.db.delete("Error Log", {"method": title, "creation": [">=", since]})
 		)
 
+		# An ERPNext upgrade changes a standard rule: reported once, the Custom DocPerm copy is left alone.
 		rule = frappe.get_all(
-			"Custom DocPerm", filters={"parent": "Customer", "role": ["!=", AGENT_ROLE]}, fields=["name", "role", "write"], limit=1
+			"DocPerm", filters={"parent": "Customer", "role": ["!=", AGENT_ROLE]}, fields=["name", "role", "write"], limit=1
 		)[0]
-		frappe.db.set_value("Custom DocPerm", rule.name, "write", 0 if rule.write else 1)
+		copy = frappe.db.get_value("Custom DocPerm", {"parent": "Customer", "role": rule.role, "permlevel": 0, "if_owner": 0}, ["name", "write"], as_dict=True)
+		frappe.db.set_value("DocPerm", rule.name, "write", 0 if rule.write else 1)
 		self.assertEqual(check_standard_permission_drift(), ["Customer"])
 		log = frappe.get_last_doc("Error Log", filters={"method": title})
 		self.assertIn(rule.role, log.error)
-		self.assertEqual(frappe.db.get_value("Custom DocPerm", rule.name, "write"), 0 if rule.write else 1)
+		self.assertEqual(frappe.db.get_value("Custom DocPerm", copy.name, "write"), copy.write)
+		self.assertEqual(check_standard_permission_drift(), [])  # once
+
+		# A rule another app or an admin adds as Custom DocPerm is not drift.
+		frappe.get_doc({"doctype": "Custom DocPerm", "parent": "Customer", "parenttype": "DocType", "parentfield": "permissions",
+			"role": "Accounts Manager", "permlevel": 3, "read": 1}).insert(ignore_permissions=True)  # fmt: skip
+		self.assertEqual(check_standard_permission_drift(), [])
 
 	# 13
 	def test_standard_invoice_keeps_default_series(self):

@@ -134,9 +134,11 @@ class TestMobileTrip(MobileSalesTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "needs status"):
 			trip_service.end_day(trip.name)
 		self.assertEqual(trip_service.start_trip(trip.name), "In Field")
-		with self.assertRaisesRegex(frappe.ValidationError, "needs status"):
-			trip_service.start_trip(trip.name)
+		self.assertEqual(trip_service.start_trip(trip.name), "In Field")  # retry after a timeout: no error
 		self.assertEqual(trip_service.end_day(trip.name), "Settling")
+		self.assertEqual(trip_service.end_day(trip.name), "Settling")
+		with self.assertRaisesRegex(frappe.ValidationError, "needs status"):
+			trip_service.start_trip(trip.name)  # but never back from Settling
 
 	# 8
 	def test_top_up(self):

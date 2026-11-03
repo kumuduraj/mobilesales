@@ -371,7 +371,7 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 
 | Method | Purpose |
 | --- | --- |
-| `get_context()` | Agent, open trip, settings flags, price list |
+| `get_context()` | Agent, open trip (or, with none open, the agent's last trip: name, status, date, sales), settings flags, price list |
 | `get_van_stock(trip)` | Item, uom, actual_qty, rate, image |
 | `get_route_plan(trip)` | Route customers + visited flag + outstanding |
 | `get_customer(customer)` | Details, primary contact/address, outstanding invoices, last shelf stock, credit available (open credit notes, Phase 5b) |
@@ -382,16 +382,16 @@ Vue 3 + `frappe-ui` built into `mobile_sales/public/frontend`, served by `www/mo
 | `submit_visit(payload)` | Creates + submits Customer Visit (and SI/PE); idempotent on `client_ref` |
 | `upload_visit_photo(filename, filedata, visit / client_ref)` | Check-in photo (jpeg/png/webp, ≤ 5 MB) on the agent's own visit |
 | `get_visits(trip)` | The trip's visits (History screen) |
-| `start_trip(trip)` / `end_day(trip)` / `reopen_trip(trip)` | Status transitions (§5.5) |
+| `start_trip(trip)` / `end_day(trip)` / `reopen_trip(trip)` | Status transitions (§5.5); a retry of start / end day returns the current status |
 | `get_settlement_draft(trip)` | Computed reconciliation (creates nothing) |
 | `save_settlement(trip, payload)` | Creates / updates the Draft settlement with the agent's fields only (returned / damaged qty and batch, cash denominations); recomputes the reconciliation |
-| `submit_settlement_for_verification(settlement_name)` | Applies the workflow action from Draft to Pending Store (§6.5) |
+| `submit_settlement_for_verification(settlement_name)` | Applies the workflow action from Draft to Pending Store (§6.5); a retry returns the settlement as it is (`duplicate`) |
 | `get_receipt_escpos(doctype, name, width)` | Plain-text receipt lines for the agent's own mobile documents (for the later ESC/POS hand-off, §6.3) |
 | `outstanding_invoice_query(...)` | Previous Outstanding picker on Customer Visit (one customer and company) |
 
 `save_settlement` + `submit_settlement_for_verification` replace the earlier single `submit_settlement`.
 
-Every method resolves the agent from `frappe.session.user`; trip/customer arguments are re-checked against it.
+Every method resolves the agent from `frappe.session.user`; trip/customer arguments are re-checked against it. The expensive calls have a per-user limit per minute (SECURITY_REVIEW.md S10).
 
 ### 6.3 Printing
 
@@ -523,29 +523,30 @@ mobile_sales/
 5. **Mobile SPA** — screens in §6.1 on top of the API, PWA shell (app shell cache only), browser printing. (ESC/POS hand-off deferred until after v1.0.0, §6.3.)
 6. **Reports + workspace** — §7.
 5b. **Vehicles, discounts, returns** — Mobile Vehicle + legacy patch (§3.6), line and invoice discounts with the agent cap (§5.1), customer returns with credit notes and set-off (§4.5), settlement return count (§4.3).
-7. **Phase 2** — offline queue, GPS track.
+7. **Hardening → v1.0.0** — security review ([SECURITY_REVIEW.md](SECURITY_REVIEW.md)), data integrity (idempotent submits, cancel chains, races), performance ([PERFORMANCE.md](PERFORMANCE.md)), upgrade safety (ERPNext version-16 head), install / uninstall, admin and user guides.
+8. **After v1.0.0** — offline queue, GPS track, ESC/POS hand-off, cheques ([DEFERRED.md](DEFERRED.md)).
 
 ### 8.3 Acceptance tests
 
-- [ ] Standard Sales Invoice on main warehouse submits and cancels with no mobile hook side-effects.
-- [ ] Standard Sales Invoice using a van warehouse is rejected.
-- [ ] Trip submit moves exactly `load_items` qty to van; second open trip for same agent rejected.
-- [ ] No Sale visit saves with reason, creates no SI/PE, updates Customer mobile_no when direct-update on.
-- [ ] Sale visit: SI with `update_stock=1` from van, pricing rule applied, PE to agent cash, links written back.
-- [ ] Overselling: two concurrent visits for the last 5 units — one fails.
-- [ ] Credit sale blocked when `allow_credit_sales` off; allowed up to agent limit when on.
-- [ ] Previous-outstanding collection allocates correctly across invoices.
-- [ ] Settlement: issued 100, sold 70, returned 25, damaged 3 → missing 2; Return/Damage/Shortage entries post; van Bin = 0.
-- [ ] Cash: float 2,000 + collections 48,500, handed 50,000 → variance −500 → JE to shortage (or Employee) and agent cash = 0.
-- [ ] Variance above tolerance cannot pass without Supervisor.
-- [ ] Visit cancel after settlement rejected; settlement cancel reverses all five postings.
-- [ ] Agent A cannot read Agent B's trips, visits, invoices via list, report or API.
-- [ ] Batch-tracked item: issue, sale, return and missing all allocate batches FIFO; van batch balance = 0 after settlement.
+- [x] Standard Sales Invoice on main warehouse submits and cancels with no mobile hook side-effects. (`test_foundation.test_standard_sales_invoice_unaffected`; after uninstall: `perf/install_check`)
+- [x] Standard Sales Invoice using a van warehouse is rejected. (`test_foundation.test_sales_invoice_on_van_without_trip_blocked`)
+- [x] Trip submit moves exactly `load_items` qty to van; second open trip for same agent rejected. (`test_trip.test_submit_moves_load_to_van`, `test_second_open_trip_rejected`)
+- [x] No Sale visit saves with reason, creates no SI/PE, updates Customer mobile_no when direct-update on. (`test_visit.test_no_sale_updates_customer_directly`)
+- [x] Sale visit: SI with `update_stock=1` from van, pricing rule applied, PE to agent cash, links written back. (`test_visit.test_cash_sale_creates_invoice_and_payment`, `test_pricing_rule_totals_match_invoice`)
+- [x] Overselling: two concurrent visits for the last 5 units — one fails. (`test_visit.test_oversell_rejected`; real threads: `perf/install_check.races`)
+- [x] Credit sale blocked when `allow_credit_sales` off; allowed up to agent limit when on. (`test_visit.test_credit_rules`)
+- [x] Previous-outstanding collection allocates correctly across invoices. (`test_visit.test_collection_only_allocates_previous_invoices`)
+- [x] Settlement: issued 100, sold 70, returned 25, damaged 3 → missing 2; Return/Damage/Shortage entries post; van Bin = 0. (`test_settlement.test_issued_sold_returned_damaged_missing`)
+- [x] Cash: float 2,000 + collections 48,500, handed 50,000 → variance −500 → JE to shortage (or Employee) and agent cash = 0. (`test_settlement.test_cash_shortage_posts_variance_journal`, `test_recover_shortages_from_agent`)
+- [x] Variance above tolerance cannot pass without Supervisor. (`test_settlement.test_over_tolerance_needs_supervisor`)
+- [x] Visit cancel after settlement rejected; settlement cancel reverses all five postings. (`test_visit.test_cancel_rejected_on_settled_trip`, `test_settlement.test_cancel_reverses_and_allows_resettle`, ledger snapshots: `test_integrity`)
+- [x] Agent A cannot read Agent B's trips, visits, invoices via list, report or API. (`test_security.test_agent_b_reaches_nothing_of_agent_a_or_the_office`, `test_api.test_agent_b_cannot_use_agent_a_data`, `test_reports`)
+- [x] Batch-tracked item: issue, sale, return and missing all allocate batches FIFO; van batch balance = 0 after settlement. (`test_trip.test_batch_issue_picks_fifo`, `test_settlement.test_batches_return_oldest_first_and_named_damage`)
 
 ### 8.4 Open questions
 
 - Batch-tracked items: resolved — present on agrosys, handled in §5.6.
 - Customer sales returns: resolved — Phase 5b, §4.5.
-- Agent shortages: always recover from salary, or write off below tolerance?
+- Agent shortages: resolved (Raj, 2026-11-03) — write off by default; Settings *Recover shortage from agent* posts to the employee recovery account. Salary deduction waits for HRMS ([DEFERRED.md](DEFERRED.md) §6).
 - Vehicle separate from the agent: resolved — Mobile Vehicle with optional helper, §3.6.
 - Phase 5b decisions (Raj, 2026-11-02): return rate read only; leftover credit not auto-applied (customer card shows credit available); max_return_value_per_visit 0 = supervisor only; invoice discount on Net Total.

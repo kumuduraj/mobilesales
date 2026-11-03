@@ -5,7 +5,8 @@ ownership of the trip / visit / settlement it touches. Inputs are validated and 
 on the server; client totals are never trusted."""
 
 import base64
-from functools import partial
+import binascii
+from functools import partial, wraps
 
 import frappe
 from frappe import _
@@ -53,6 +54,7 @@ OUTCOMES = ("Sale", "No Sale", "Collection Only", "Shop Closed", "Return Only")
 PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
 SEARCH_LIMIT = 20
+SEARCH_MAX_CHARS = 140
 
 
 # Access helpers
@@ -109,6 +111,31 @@ def own_visit(name):
 	return visit
 
 
+def throttle(limit, seconds=60):
+	"""Per-user cap on the expensive calls (pricing, submit, uploads, invoice lists): far above a real day's
+	pace, it only stops runaway loops and scripted use. Per user, never per IP: agents share carrier IPs."""
+
+	def decorator(fn):
+		@wraps(fn)
+		def wrapper(*args, **kwargs):
+			if getattr(frappe.local, "request", None):
+				key = frappe.cache.make_key(f"mobilesales:throttle:{fn.__name__}:{frappe.session.user}")
+				count = frappe.cache.incrby(key, 1)
+				if count == 1:
+					frappe.cache.expire(key, seconds)
+				if count > limit:
+					frappe.throw(_("Too many requests. Wait a minute and try again."), frappe.RateLimitExceededError)
+			return fn(*args, **kwargs)
+
+		return wrapper
+
+	return decorator
+
+
+def search_text(q) -> str:
+	return cstr(q).strip()[:SEARCH_MAX_CHARS]
+
+
 # Context and van stock
 
 
@@ -116,7 +143,7 @@ def own_visit(name):
 def get_context() -> dict:
 	require_roles()
 	agent = session_agent()
-	trip = None
+	trip = last_trip = None
 	if agent:
 		trip = frappe.db.get_value(
 			"Mobile Trip",
@@ -144,6 +171,15 @@ def get_context() -> dict:
 			as_dict=True,
 			order_by="creation desc",
 		)
+		if not trip:
+			# Today without a trip: "Last trip MTRIP-… · Settled · sales …"
+			last_trip = frappe.db.get_value(
+				"Mobile Trip",
+				{"agent": agent.name, "docstatus": 1},
+				["name", "status", "trip_date", "invoiced_amount"],
+				as_dict=True,
+				order_by="trip_date desc, creation desc",
+			)
 		agent.pop("cash_account", None)
 
 	settings = ms_settings.get_settings()
@@ -156,6 +192,7 @@ def get_context() -> dict:
 		"full_name": frappe.utils.get_fullname(frappe.session.user),
 		"agent": agent,
 		"trip": trip,
+		"last_trip": last_trip,
 		"settings": flags,
 		"no_sale_reasons": frappe.get_all(
 			"Visit No Sale Reason", fields=["name", "category", "requires_remark"], order_by="name asc"
@@ -233,7 +270,7 @@ def get_route_plan(trip: str) -> list[dict]:
 @frappe.whitelist()
 def search_customers(q: str = "") -> list[dict]:
 	require_roles()
-	q = (q or "").strip()
+	q = search_text(q)
 	if len(q) < 2:
 		return []
 	like = f"%{q}%"
@@ -284,12 +321,18 @@ def return_invoice_query(doctype, txt, searchfield, start, page_len, filters):
 		"company": filters.company,
 		"docstatus": 1,
 		"is_return": 0,
+		"update_stock": 1,  # invoices delivered with a Delivery Note are returned at the office
 		"name": ["like", f"%{txt}%"],
 	}
 	if filters.item_code:
+		# this customer's invoices with the item only (not every invoice of the item, company wide)
 		conditions["name"] = [
 			"in",
-			frappe.get_all("Sales Invoice Item", filters={"item_code": filters.item_code, "docstatus": 1}, pluck="parent")
+			frappe.db.sql_list(
+				"""select distinct i.parent from `tabSales Invoice Item` i join `tabSales Invoice` s on s.name = i.parent
+				where i.item_code = %s and i.docstatus = 1 and s.customer = %s and s.company = %s and s.name like %s""",
+				(filters.item_code, filters.customer, filters.company, f"%{txt}%"),
+			)
 			or [""],
 		]
 	return frappe.get_all(
@@ -325,13 +368,14 @@ def get_returnable_lines(invoice: str, customer: str) -> list[dict]:
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_customer_invoices(customer: str) -> list[dict]:
 	"""The customer's recent submitted, non-return invoices for the return picker, newest first, with what
 	tells look-alike numbers apart: date, qty still returnable per item, total and what is still owed."""
 	require_roles()
 	invoices = frappe.get_all(
 		"Sales Invoice",
-		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0},
+		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0, "update_stock": 1},
 		fields=["name", "posting_date", "grand_total", "rounded_total", "outstanding_amount"],
 		order_by="posting_date desc, posting_time desc, creation desc",
 		limit_page_length=SEARCH_LIMIT,
@@ -350,7 +394,7 @@ def get_customer_invoices(customer: str) -> list[dict]:
 def search_items(q: str = "") -> list[dict]:
 	"""Active stock items without batches for returns without an invoice."""
 	require_roles()
-	q = (q or "").strip()
+	q = search_text(q)
 	if len(q) < 2:
 		return []
 	like = f"%{q}%"
@@ -441,6 +485,7 @@ def _previous_rows(rows) -> list[dict]:
 
 
 @frappe.whitelist()
+@throttle(120)
 def price_cart(
 	trip: str,
 	customer: str,
@@ -481,7 +526,10 @@ def price_cart(
 	for row in return_rows:
 		cart.append("return_items", row)
 	for row in _previous_rows(collect_previous):
-		row["outstanding"] = flt(frappe.db.get_value("Sales Invoice", row["sales_invoice"], "outstanding_amount"))
+		invoice = frappe.db.get_value("Sales Invoice", row["sales_invoice"], ["customer", "company", "outstanding_amount"], as_dict=True)
+		if not invoice or invoice.customer != customer or invoice.company != doc.company:
+			frappe.throw(_("Sales Invoice {0} is not an invoice of {1}.").format(row["sales_invoice"], customer))
+		row["outstanding"] = flt(invoice.outstanding_amount)
 		cart.append("collect_previous", row)
 	notes = returns.validate_returns(cart, agent, settings) if return_rows else []
 	result = {
@@ -584,6 +632,7 @@ def _visit_summary(visit) -> dict:
 
 
 @frappe.whitelist()
+@throttle(30)
 def submit_visit(payload: str | dict) -> dict:
 	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref.
 	A refused visit is logged in Mobile Visit Rejection, so the supervisor sees what the agent was told."""
@@ -624,7 +673,7 @@ def _submit_visit(data) -> dict:
 
 	existing = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 	if existing:
-		return {**_visit_summary(own_visit(existing)), "duplicate": True}
+		return _duplicate(existing)
 
 	trip = own_trip(data.mobile_trip)
 	if data.outcome not in OUTCOMES:
@@ -674,11 +723,25 @@ def _submit_visit(data) -> dict:
 		existing = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 		if not existing:
 			raise
-		return {**_visit_summary(own_visit(existing)), "duplicate": True}
+		return _duplicate(existing)
 	return {**_visit_summary(visit), "duplicate": False}
 
 
+def _duplicate(name) -> dict:
+	"""The same client_ref again (double tap, retry after a timeout): the visit already recorded. One that was
+	cancelled since (or a draft made in Desk) is not passed off as recorded."""
+	visit = own_visit(name)
+	if visit.docstatus != 1:
+		frappe.throw(
+			_("Visit {0} with this reference is {1}; start a new visit.").format(
+				visit.name, _("cancelled") if visit.docstatus == 2 else _("a draft")
+			)
+		)
+	return {**_visit_summary(visit), "duplicate": True}
+
+
 @frappe.whitelist()
+@throttle(20)
 def upload_visit_photo(
 	filename: str, filedata: str, visit: str | None = None, client_ref: str | None = None
 ) -> dict:
@@ -688,7 +751,13 @@ def upload_visit_photo(
 		visit = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 	doc = own_visit(visit)
 
-	content = base64.b64decode((filedata or "").split(",")[-1], validate=True)
+	encoded = cstr(filedata).split(",")[-1]
+	if len(encoded) > PHOTO_MAX_BYTES * 4 // 3 + 4:  # checked before decoding
+		frappe.throw(_("Photo is larger than 5 MB."))
+	try:
+		content = base64.b64decode(encoded, validate=True)
+	except (binascii.Error, ValueError):
+		frappe.throw(_("Only JPEG, PNG or WebP photos can be uploaded."))
 	if len(content) > PHOTO_MAX_BYTES:
 		frappe.throw(_("Photo is larger than 5 MB."))
 	content_type = _image_type(content)
@@ -706,6 +775,13 @@ def upload_visit_photo(
 			"content": content,
 		}
 	)
+	# A retake replaces the earlier check-in photo (one per visit, no orphan files).
+	for old in frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": "Customer Visit", "attached_to_name": doc.name, "attached_to_field": "check_in_photo"},
+		pluck="name",
+	):
+		frappe.delete_doc("File", old, ignore_permissions=True)
 	file.flags.ignore_permissions = True
 	file.insert()
 	doc.db_set("check_in_photo", file.file_url, update_modified=False)
@@ -805,6 +881,7 @@ def settlement_warnings(doc) -> list[str]:
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_settlement_draft(trip: str) -> dict:
 	"""The trip's open settlement as saved, or a computed draft when none exists yet (nothing saved)."""
 	doc = own_trip(trip, roles=SETTLEMENT_VIEW_ROLES + (AGENT_ROLE,))
@@ -852,16 +929,19 @@ def submit_settlement_for_verification(settlement_name: str) -> dict:
 		frappe.throw(_("Mobile Settlement {0} not found.").format(settlement_name))
 	doc = frappe.get_doc("Mobile Settlement", settlement_name)
 	own_trip(doc.mobile_trip)
+	doc = frappe.get_doc("Mobile Settlement", settlement_name, for_update=True)
 	if (doc.workflow_state or "Draft") != "Draft":
-		frappe.throw(_("Settlement {0} is already {1}.").format(doc.name, _(doc.workflow_state)))
+		# a retry after a timeout (or a double tap): already submitted, show where it is
+		return {**_settlement_payload(doc), "duplicate": True}
 	apply_workflow(doc, "Submit for Verification")
-	return _settlement_payload(frappe.get_doc("Mobile Settlement", settlement_name))
+	return {**_settlement_payload(frappe.get_doc("Mobile Settlement", settlement_name)), "duplicate": False}
 
 
 # Printing
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_receipt_escpos(doctype: str, name: str, width: int = 48) -> dict:
 	"""Plain-text receipt lines (for a later ESC/POS hand-off) for the agent's own mobile documents."""
 	require_roles()
