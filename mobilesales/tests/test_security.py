@@ -254,6 +254,9 @@ class TestSecurity(SettlementTestBase):
 			for report in ("Customer Visit Register", "Customer Stock Position", "Outstanding by Agent"):
 				rows = [r for r in run_report(report, {"company": self.company})["result"] if isinstance(r, dict)]
 				self.assertFalse([r for r in rows if r.get("agent") == self.agent_a.name or r.get("visit") == visit.name], report)
+			# query_report logs a refused run to Error Log (MyISAM, survives the rollback): remove what this writes
+			since = frappe.utils.now_datetime()
+			self.addCleanup(lambda: frappe.db.delete("Error Log", {"method": "Report execution failed for: Mobile Trip Day Report", "creation": [">=", since]}))
 			with self.assertRaises(frappe.PermissionError):
 				run_report("Mobile Trip Day Report", {"mobile_trip": trip.name})
 			with self.assertRaises(frappe.PermissionError):

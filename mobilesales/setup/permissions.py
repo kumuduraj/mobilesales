@@ -5,6 +5,8 @@ its standard DocPerms. frappe.permissions.add_permission first copies the standa
 DocPerm (setup_custom_perms -> copy_perms) and then adds our rule, so every existing role keeps
 exactly its rights. Idempotent: each rule is created once and its rights are re-asserted."""
 
+import json
+
 import frappe
 from frappe.permissions import add_permission, update_permission_property
 
@@ -29,7 +31,9 @@ ROLE_PERMISSIONS = {
 	"UOM": VISIT_MASTER_ROLES,
 	"Price List": VISIT_MASTER_ROLES,
 	"Item Price": VISIT_MASTER_ROLES,
-	"Batch": VISIT_MASTER_ROLES,
+	# ERPNext v16.5x get_batch_qty checks Batch select as the session user: store keeper (trip load, top-up) and
+	# cashier (settlement submit) too.
+	"Batch": {**VISIT_MASTER_ROLES, STORE_KEEPER_ROLE: READ, CASHIER_ROLE: READ},
 	"Contact": VISIT_MASTER_ROLES,
 	"Address": VISIT_MASTER_ROLES,
 	"Territory": VISIT_MASTER_ROLES,
@@ -65,32 +69,68 @@ def ensure_agent_permissions():
 				wanted = rights.get(right, 0)
 				if (frappe.db.get_value("Custom DocPerm", rule, right) or 0) != wanted:
 					update_permission_property(doctype, role, 0, right, wanted)
+	baseline = load_baseline()
+	missing = {doctype: standard_rules(doctype) for doctype in ROLE_PERMISSIONS if doctype not in baseline}
+	if missing:
+		save_baseline({**baseline, **missing})
+
+
+# Drift: the standard DocPerms ERPNext ships, compared with the ones in force when the Custom DocPerm copies
+# were made (the baseline, kept in DefaultValue; read without the defaults cache, so a rolled-back test never
+# leaves a stale copy). Rules other apps or admins add as Custom DocPerm are not drift.
+BASELINE_KEY = "mobilesales_standard_docperm_baseline"
+
+
+def _rights() -> list:
+	return ["permlevel", *(df.fieldname for df in frappe.get_meta("DocPerm").fields if df.fieldtype == "Check")]
+
+
+def standard_rules(doctype) -> dict:
+	"""{"role|permlevel|if_owner": {right: 0/1}} of the standard DocPerms, Mobile Sales roles left out."""
+	rights = _rights()
+	rows = frappe.get_all(
+		"DocPerm", filters={"parent": doctype, "role": ["not in", list(ROLE_PERMISSIONS[doctype])]}, fields=["role", *rights]
+	)
+	return {f"{row.role}|{row.permlevel}|{row.if_owner}": {r: row.get(r) or 0 for r in rights} for row in rows}
+
+
+def load_baseline() -> dict:
+	value = frappe.db.get_value("DefaultValue", {"parent": "__default", "defkey": BASELINE_KEY}, "defvalue")
+	return json.loads(value) if value else {}
+
+
+def save_baseline(baseline: dict):
+	frappe.db.set_default(BASELINE_KEY, json.dumps(baseline, sort_keys=True))
 
 
 def check_standard_permission_drift() -> list[str]:
 	"""After an ERPNext upgrade the standard DocPerms may change, but the Custom DocPerm copies made by
-	add_permission keep the old rules. Report (never fix) every DocType whose copy no longer matches the
-	standard rules for any role this app does not manage. Returns the drifted DocTypes."""
-	rights = ["permlevel", *(df.fieldname for df in frappe.get_meta("DocPerm").fields if df.fieldtype == "Check")]
-
+	add_permission keep the old rules. Report (never fix) every DocType whose standard rules changed since the
+	copy, once: the baseline then moves on, the Error Log entry stays for review. Installs from before the
+	baseline compare the copy with the standard rules once. Returns the drifted DocTypes."""
+	baseline = load_baseline()
 	drifted = []
-	for doctype, managed in ROLE_PERMISSIONS.items():
+	for doctype in ROLE_PERMISSIONS:
 		if not frappe.db.exists("Custom DocPerm", {"parent": doctype}):
 			continue
-
-		def rules(source):
-			rows = frappe.get_all(source, filters={"parent": doctype, "role": ["not in", list(managed)]}, fields=["role", *rights])
-			return {(row.role, row.permlevel, row.if_owner): {r: row.get(r) or 0 for r in rights} for row in rows}
-
-		standard, custom = rules("DocPerm"), rules("Custom DocPerm")
-		differences = []
-		for key in sorted(set(standard) | set(custom)):
-			if standard.get(key) != custom.get(key):
-				role, level, if_owner = key
-				owner = ", if owner" if if_owner else ""
-				differences.append(
-					f"{role} (level {level}{owner}): standard {standard.get(key)} / custom {custom.get(key)}"
+		now = standard_rules(doctype)
+		then = baseline.get(doctype)
+		if then is None:  # installed before v1.0.0: the copy is the only record of the old rules
+			rights = _rights()
+			then = {
+				f"{row.role}|{row.permlevel}|{row.if_owner}": {r: row.get(r) or 0 for r in rights}
+				for row in frappe.get_all(
+					"Custom DocPerm",
+					filters={"parent": doctype, "role": ["not in", list(ROLE_PERMISSIONS[doctype])]},
+					fields=["role", *rights],
 				)
+			}
+		baseline[doctype] = now
+		differences = [
+			f"{key.replace('|', ' / level ', 1).replace('|', ', if owner ')}: was {then.get(key)} / now {now.get(key)}"
+			for key in sorted(set(then) | set(now))
+			if then.get(key) != now.get(key)
+		]
 		if not differences:
 			continue
 		drifted.append(doctype)
@@ -99,10 +139,11 @@ def check_standard_permission_drift() -> list[str]:
 		frappe.log_error(
 			title=title,
 			message=title
-			+ "\n\nThe Custom DocPerm copy no longer matches the standard DocPerm (Mobile Sales roles ignored). "
-			"mobilesales did not change anything. Review in Role Permission Manager:\n"
+			+ "\n\nERPNext's standard DocPerm changed since mobilesales copied it into Custom DocPerm, so the copy still "
+			"applies the old rules. mobilesales did not change anything. Review in Role Permission Manager:\n"
 			+ "\n".join(differences),
 			reference_doctype="DocType",
 			reference_name=doctype,
 		)
+	save_baseline(baseline)
 	return drifted

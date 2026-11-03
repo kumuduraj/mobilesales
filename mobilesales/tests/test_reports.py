@@ -395,4 +395,9 @@ class TestReports(SettlementTestBase):
 		self.assertIn("Mobile Visit Rejection", [s.link_to for s in workspace.shortcuts])
 		self.assertEqual(len(workspace.number_cards), 7)
 		self.assertEqual(len(workspace.charts), 4)
-		self.assertEqual(frappe.db.get_value("Desktop Icon", "Mobile Sales", ["link_type", "link_to", "hidden"]), ("Workspace Sidebar", "Mobile Sales", 0))
+		try:  # Frappe v16.5x: app icons are imported only on the icon-grid desktop (new sites start module-first)
+			from frappe.desk.doctype.desktop_settings.desktop_settings import is_desktop_icons_page
+		except ImportError:
+			is_desktop_icons_page = lambda: True  # noqa: E731
+		if is_desktop_icons_page():
+			self.assertEqual(frappe.db.get_value("Desktop Icon", "Mobile Sales", ["link_type", "link_to", "hidden"]), ("Workspace Sidebar", "Mobile Sales", 0))

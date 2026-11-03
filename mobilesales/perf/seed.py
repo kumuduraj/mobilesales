@@ -43,9 +43,19 @@ def run(agents=10, days=60, visits=30, seed=7):
 	with patch("mobilesales.services.day_report.queue_attach"):  # no 600 PDFs on the shared workers
 		for offset in range(int(days)):
 			day = getdate(add_days(start, offset))
-			for agent in world.agents:
-				run_day(world, agent, day, int(visits), rnd, stats)
-				frappe.db.commit()
+			for attempt in range(3):
+				before = dict(stats)
+				try:
+					run_day(world, world.agents, day, int(visits), rnd, stats)
+					frappe.db.commit()
+					break
+				except frappe.QueryDeadlockError:
+					frappe.db.rollback()  # the shared workers touched the same rows: the whole day again
+					stats.clear()
+					stats.update(before)
+					print(f"{day} deadlock, attempt {attempt + 1}", flush=True)
+			else:
+				frappe.throw(f"{day}: deadlocks three times running")
 			print(f"{day} trips={stats['trips']} visits={stats['visits']} sales={stats['Sale']} {time.monotonic() - began:.0f}s", flush=True)
 	frappe.set_user("Administrator")
 	return dict(stats)
@@ -61,7 +71,7 @@ def smoke(visits=6):
 		world = ensure_world(1, add_days(day, -1))
 		with patch("mobilesales.services.day_report.queue_attach"):
 			began = time.monotonic()
-			run_day(world, world.agents[0], day, int(visits), random.Random(1), stats)
+			run_day(world, world.agents[:1], day, int(visits), random.Random(1), stats)
 			print(f"smoke: {dict(stats)} in {time.monotonic() - began:.1f}s", flush=True)
 	finally:
 		frappe.set_user("Administrator")
@@ -185,7 +195,7 @@ def receipt(item_code, qty, warehouse_name, batch_no, day):
 	se.submit()
 
 
-# One agent's day
+# One day
 
 
 @contextmanager
@@ -200,49 +210,57 @@ def at(moment: datetime):
 		yield
 
 
-def run_day(world, agent, day, visit_count, rnd, stats):
+def run_day(world, agents, day, visit_count, rnd, stats):
+	"""One day of every agent, in clock order as on a real day: all vans load at 06:00, visits from 08:00 every
+	15 minutes (agents side by side), all settlements at 20:00. Postings never go back in time."""
 	from mobilesales.api import mobile as api
 
-	if frappe.db.exists("Mobile Trip", {"agent": agent.name, "trip_date": day, "docstatus": 1}):
-		return
 	morning = datetime.combine(day, datetime.min.time()).replace(hour=6)
-	frappe.set_user(STORE)
-	trip = frappe.get_doc({"doctype": "Mobile Trip", "agent": agent.name, "trip_date": day,
-		"opening_cash_float": 1000 if rnd.random() < 0.3 else 0,
-		"load_items": [{"item_code": i.item_code, "qty": 12 if i.has_batch_no else 18} for i in world.stock_items]})  # fmt: skip
-	with at(morning):
-		trip.insert()
-		trip.submit()
-	stats["trips"] += 1
+	days = []
+	for agent in agents:
+		if frappe.db.exists("Mobile Trip", {"agent": agent.name, "trip_date": day, "docstatus": 1}):
+			continue
+		frappe.set_user(STORE)
+		trip = frappe.get_doc({"doctype": "Mobile Trip", "agent": agent.name, "trip_date": day,
+			"opening_cash_float": 1000 if rnd.random() < 0.3 else 0,
+			"load_items": [{"item_code": i.item_code, "qty": 12 if i.has_batch_no else 18} for i in world.stock_items]})  # fmt: skip
+		with at(morning):
+			trip.insert()
+			trip.submit()
+		stats["trips"] += 1
+		frappe.set_user(agent.user)
+		api.start_trip(trip.name)
+		route = list(agent.route)
+		rnd.shuffle(route)
+		days.append(frappe._dict(agent=agent, trip=trip, route=route, van={i.item_code: (12 if i.has_batch_no else 18) for i in world.stock_items}))
 
-	frappe.set_user(agent.user)
-	van = {i.item_code: (12 if i.has_batch_no else 18) for i in world.stock_items}
-	api.start_trip(trip.name)
-	route = list(agent.route)
-	rnd.shuffle(route)
 	for index in range(visit_count):
 		moment = morning.replace(hour=8) + timedelta(minutes=15 * index)
-		customer = route[index % len(route)] if rnd.random() > 0.05 else rnd.choice(world.all_customers)  # 5% off route
-		with at(moment):
-			visit(api, trip, customer, van, world, rnd, stats, f"perf-{trip.name}-{index}")
-	api.end_day(trip.name)
+		for d in days:
+			frappe.set_user(d.agent.user)
+			customer = d.route[index % len(d.route)] if rnd.random() > 0.05 else rnd.choice(world.all_customers)  # 5% off route
+			with at(moment):
+				visit(api, d.trip, customer, d.van, world, rnd, stats, f"perf-{d.trip.name}-{index}")
 
-	draft = api.get_settlement_draft(trip.name)
-	lines = []
-	for row in draft["stock_lines"]:
-		returned = flt(row["expected_balance"])
-		if returned >= 1 and rnd.random() < 0.03:
-			returned -= 1  # one missing now and then
-		lines.append({"item_code": row["item_code"], "returned_qty": returned})
-	handed = flt(draft["expected_cash"]) - (50 if rnd.random() < 0.05 else 0)
-	with at(morning.replace(hour=20)):
-		saved = api.save_settlement(trip.name, {"stock_lines": lines, "cash_handed_over": handed})
-		api.submit_settlement_for_verification(saved["name"])
-		for user_id, action in ((STORE, "Verify Stock"), (CASHIER, "Verify Cash")):
-			frappe.set_user(user_id)
-			apply_workflow(frappe.get_doc("Mobile Settlement", saved["name"]), action)
+	for d in days:
+		frappe.set_user(d.agent.user)
+		api.end_day(d.trip.name)
+		draft = api.get_settlement_draft(d.trip.name)
+		lines = []
+		for row in draft["stock_lines"]:
+			returned = flt(row["expected_balance"])
+			if returned >= 1 and rnd.random() < 0.03:
+				returned -= 1  # one missing now and then
+			lines.append({"item_code": row["item_code"], "returned_qty": returned})
+		handed = flt(draft["expected_cash"]) - (50 if rnd.random() < 0.05 else 0)
+		with at(morning.replace(hour=20)):
+			saved = api.save_settlement(d.trip.name, {"stock_lines": lines, "cash_handed_over": handed})
+			api.submit_settlement_for_verification(saved["name"])
+			for user_id, action in ((STORE, "Verify Stock"), (CASHIER, "Verify Cash")):
+				frappe.set_user(user_id)
+				apply_workflow(frappe.get_doc("Mobile Settlement", saved["name"]), action)
+		stats["settlements"] += 1
 	frappe.set_user("Administrator")
-	stats["settlements"] += 1
 
 
 def visit(api, trip, customer, van, world, rnd, stats, ref):
@@ -259,7 +277,7 @@ def visit(api, trip, customer, van, world, rnd, stats, ref):
 		else:
 			returns_items = []
 			if rnd.random() < 0.05:
-				returns_items = return_line(api, customer, rnd)
+				returns_items = return_line(api, customer, rnd, trip.trip_date)
 			priced = api.price_cart(trip.name, customer, lines, returns_items=returns_items)
 			credit = rnd.random() < 0.15 and priced["due_on_sale"] <= 20000
 			payload.update({"outcome": "Sale", "sale_items": lines, "return_items": returns_items,
@@ -283,7 +301,7 @@ def visit(api, trip, customer, van, world, rnd, stats, ref):
 			stats["visits"] += 1
 			return
 	if roll < 0.74:
-		returns_items = return_line(api, customer, rnd)
+		returns_items = return_line(api, customer, rnd, trip.trip_date)
 		if returns_items:
 			payload.update({"outcome": "Return Only", "return_items": returns_items})
 			api.submit_visit(payload)
@@ -299,8 +317,12 @@ def visit(api, trip, customer, van, world, rnd, stats, ref):
 	stats["visits"] += 1
 
 
-def return_line(api, customer, rnd) -> list:
+def return_line(api, customer, rnd, day=None) -> list:
+	"""One unit back against a recent invoice of an earlier day (agents are simulated one after another, so a
+	same-day invoice of another agent may carry a later time than this visit)."""
 	for invoice in api.get_customer_invoices(customer)[:3]:
+		if day and getdate(invoice.posting_date) >= getdate(day):
+			continue
 		for line in invoice.returnable:
 			if not frappe.get_cached_value("Item", line.item_code, "has_batch_no"):
 				return [{"item_code": line.item_code, "qty": 1, "against_invoice": invoice.name,

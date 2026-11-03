@@ -34,7 +34,7 @@ def make_settlement(trip: str) -> str:
 	agent_user = frappe.db.get_value("Mobile Sales Agent", doc.agent, "user")
 	if frappe.session.user != agent_user and not set(CREATE_ROLES) & set(frappe.get_roles()):
 		frappe.throw(_("Only the trip's agent, a store keeper or a supervisor can start the settlement."), frappe.PermissionError)
-	existing = open_settlement(trip)
+	existing = open_settlement(trip, for_update=True)
 	if existing:
 		return existing
 	settlement = frappe.new_doc("Mobile Settlement")
@@ -43,11 +43,12 @@ def make_settlement(trip: str) -> str:
 	return settlement.name
 
 
-def open_settlement(trip_name, exclude=None) -> str | None:
+def open_settlement(trip_name, exclude=None, for_update=False) -> str | None:
 	filters = {"mobile_trip": trip_name, "docstatus": ["<", 2]}
 	if exclude:
 		filters["name"] = ["!=", exclude]
-	return frappe.db.get_value("Mobile Settlement", filters, "name")
+	# for_update: a locking read sees settlements committed after this transaction's snapshot (REPEATABLE READ)
+	return frappe.db.get_value("Mobile Settlement", filters, "name", for_update=for_update)
 
 
 # Document events

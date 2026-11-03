@@ -49,8 +49,8 @@ def after_migrate():
 	create_default_no_sale_reasons()
 	create_default_return_reasons()
 	add_mobile_invoice_series()
+	check_standard_permission_drift()  # first: compares with the rules in force before this migrate's copy
 	ensure_agent_permissions()
-	check_standard_permission_drift()
 
 
 def add_mobile_invoice_series():
