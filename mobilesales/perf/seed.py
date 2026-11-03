@@ -1,12 +1,13 @@
 """Performance volume (Phase 7, docs/PERFORMANCE.md): `agents` agents x `days` days x `visits` visits, recorded through
 the real phone API as the real role users and settled every evening through the workflow. Its own company
 ("_MS Perf Co") keeps it apart from the test suite's data. Runs on a test site only (allow_tests; never agrosys).
-Commits after every trip and resumes where it stopped.
+Commits after every day and resumes where it stopped.
 
 	bench --site mstest.local execute mobilesales.perf.seed.run --kwargs "{'agents': 10, 'days': 60, 'visits': 30}"
 
 Each day is posted at its own date and times (load 06:00, visits from 08:00, settlement 20:00), as a real day is."""
 
+import os
 import random
 import time
 from collections import defaultdict
@@ -23,6 +24,7 @@ PREFIX = "_MS Perf"
 COMPANY = f"{PREFIX} Co"
 ABBR = "MSP"
 ITEMS, BATCH_ITEMS, CUSTOMERS_PER_ROUTE = 20, 3, 40
+PAUSE_FILE = "/tmp/ms_seed.pause"
 STORE, CASHIER, SUPERVISOR = "perf.store@example.com", "perf.cashier@example.com", "perf.supervisor@example.com"
 
 
@@ -31,18 +33,24 @@ def guard():
 		frappe.throw("mobilesales.perf runs on a test site only (allow_tests on, never agrosys).")
 
 
-def run(agents=10, days=60, visits=30, seed=7):
+def run(agents=10, days=60, visits=30, seed=7, only=None):
+	"""`days` days ending yesterday; `only` runs just the first `only` of them (resume later with a larger value).
+	Between days it waits while PAUSE_FILE exists (nothing is open then: the day before is committed)."""
 	guard()
 	frappe.flags.mute_emails = True
 	rnd = random.Random(seed)
 	start = getdate(add_days(nowdate(), -int(days)))
-	world = ensure_world(int(agents), add_days(start, -1))
+	with jobs_inline():
+		world = ensure_world(int(agents), add_days(start, -1))
 	frappe.db.commit()
 	stats = defaultdict(int)
 	began = time.monotonic()
-	with patch("mobilesales.services.day_report.queue_attach"):  # no 600 PDFs on the shared workers
-		for offset in range(int(days)):
+	with jobs_inline():
+		for offset in range(int(only or days)):
 			day = getdate(add_days(start, offset))
+			while os.path.exists(PAUSE_FILE):
+				time.sleep(30)
+			day_began = time.monotonic()
 			for attempt in range(3):
 				before = dict(stats)
 				try:
@@ -56,7 +64,8 @@ def run(agents=10, days=60, visits=30, seed=7):
 					print(f"{day} deadlock, attempt {attempt + 1}", flush=True)
 			else:
 				frappe.throw(f"{day}: deadlocks three times running")
-			print(f"{day} trips={stats['trips']} visits={stats['visits']} sales={stats['Sale']} {time.monotonic() - began:.0f}s", flush=True)
+			print(f"{day} trips={stats['trips']} visits={stats['visits']} sales={stats['Sale']} {time.monotonic() - began:.0f}s"
+				f" day {time.monotonic() - day_began:.0f}s", flush=True)  # fmt: skip
 	frappe.set_user("Administrator")
 	return dict(stats)
 
@@ -68,8 +77,8 @@ def smoke(visits=6):
 	stats = defaultdict(int)
 	day = getdate(add_days(nowdate(), -60))
 	try:
-		world = ensure_world(1, add_days(day, -1))
-		with patch("mobilesales.services.day_report.queue_attach"):
+		with jobs_inline():
+			world = ensure_world(1, add_days(day, -1))
 			began = time.monotonic()
 			run_day(world, world.agents[:1], day, int(visits), random.Random(1), stats)
 			print(f"smoke: {dict(stats)} in {time.monotonic() - began:.1f}s", flush=True)
@@ -199,32 +208,58 @@ def receipt(item_code, qty, warehouse_name, batch_no, day):
 
 
 @contextmanager
+def jobs_inline():
+	"""Background jobs run here and now, in this process: a test site's jobs never reach the bench's shared workers
+	(CLAUDE.md rule 22). Frappe enqueues some straight away, outside the transaction (delete_doc's
+	delete_dynamic_links), so the disabled scheduler alone does not keep them off. The Day Report PDF is skipped."""
+	from frappe.utils import background_jobs
+
+	original = background_jobs.enqueue
+
+	def inline(method, *args, **kwargs):
+		kwargs["now"] = True
+		return original(method, *args, **kwargs)
+
+	with patch.object(background_jobs, "enqueue", inline), patch.object(frappe, "enqueue", inline), patch(
+		"mobilesales.services.day_report.queue_attach"
+	):
+		yield
+
+
+@contextmanager
 def at(moment: datetime):
-	"""Pin "now" for the app's own postings to the simulated moment."""
-	day = moment.date().isoformat()
+	"""Pin "now" for the app's own postings to the simulated moment. Each call stands for a phone request, so the
+	per-request state Frappe resets in frappe.init starts empty: Document.insert leaves its (doctype, name) in
+	flags.currently_saving, a list every save searches, and over 30 days in one process it reached ~200,000
+	entries (docs/PERFORMANCE.md)."""
+	day, clock = moment.date().isoformat(), moment.strftime("%H:%M:%S")
+	frappe.flags.currently_saving = []
+	frappe.local.future_sle = {}
 	with ExitStack() as stack:
 		stack.enter_context(patch("mobilesales.api.mobile.now_datetime", return_value=moment))
-		stack.enter_context(patch("mobilesales.services.stock.nowtime", return_value="06:00:00"))
+		stack.enter_context(patch("mobilesales.services.stock.nowtime", return_value=clock))
 		stack.enter_context(patch("mobilesales.services.settlement.nowdate", return_value=day))
-		stack.enter_context(patch("mobilesales.services.settlement.nowtime", return_value="20:00:00"))
+		stack.enter_context(patch("mobilesales.services.settlement.nowtime", return_value=clock))
 		yield
 
 
 def run_day(world, agents, day, visit_count, rnd, stats):
-	"""One day of every agent, in clock order as on a real day: all vans load at 06:00, visits from 08:00 every
-	15 minutes (agents side by side), all settlements at 20:00. Postings never go back in time."""
+	"""One day of every agent, in clock order as on a real day: vans load from 06:00 a minute apart, visits from 08:00
+	every 15 minutes (agents side by side, a minute apart), settlements from 20:00 three minutes apart. Postings never
+	go back in time, and no two share a moment: ERPNext treats a stock posting at the same time as an existing one on
+	the same item and warehouse as back-dated and queues a Repost Item Valuation for it (docs/PERFORMANCE.md)."""
 	from mobilesales.api import mobile as api
 
 	morning = datetime.combine(day, datetime.min.time()).replace(hour=6)
 	days = []
-	for agent in agents:
+	for slot, agent in enumerate(agents):
 		if frappe.db.exists("Mobile Trip", {"agent": agent.name, "trip_date": day, "docstatus": 1}):
 			continue
 		frappe.set_user(STORE)
 		trip = frappe.get_doc({"doctype": "Mobile Trip", "agent": agent.name, "trip_date": day,
 			"opening_cash_float": 1000 if rnd.random() < 0.3 else 0,
 			"load_items": [{"item_code": i.item_code, "qty": 12 if i.has_batch_no else 18} for i in world.stock_items]})  # fmt: skip
-		with at(morning):
+		with at(morning + timedelta(minutes=slot)):
 			trip.insert()
 			trip.submit()
 		stats["trips"] += 1
@@ -232,14 +267,14 @@ def run_day(world, agents, day, visit_count, rnd, stats):
 		api.start_trip(trip.name)
 		route = list(agent.route)
 		rnd.shuffle(route)
-		days.append(frappe._dict(agent=agent, trip=trip, route=route, van={i.item_code: (12 if i.has_batch_no else 18) for i in world.stock_items}))
+		days.append(frappe._dict(slot=slot, agent=agent, trip=trip, route=route, van={i.item_code: (12 if i.has_batch_no else 18) for i in world.stock_items}))
 
 	for index in range(visit_count):
 		moment = morning.replace(hour=8) + timedelta(minutes=15 * index)
 		for d in days:
 			frappe.set_user(d.agent.user)
 			customer = d.route[index % len(d.route)] if rnd.random() > 0.05 else rnd.choice(world.all_customers)  # 5% off route
-			with at(moment):
+			with at(moment + timedelta(minutes=d.slot)):
 				visit(api, d.trip, customer, d.van, world, rnd, stats, f"perf-{d.trip.name}-{index}")
 
 	for d in days:
@@ -253,7 +288,7 @@ def run_day(world, agents, day, visit_count, rnd, stats):
 				returned -= 1  # one missing now and then
 			lines.append({"item_code": row["item_code"], "returned_qty": returned})
 		handed = flt(draft["expected_cash"]) - (50 if rnd.random() < 0.05 else 0)
-		with at(morning.replace(hour=20)):
+		with at(morning.replace(hour=20) + timedelta(minutes=3 * d.slot)):
 			saved = api.save_settlement(d.trip.name, {"stock_lines": lines, "cash_handed_over": handed})
 			api.submit_settlement_for_verification(saved["name"])
 			for user_id, action in ((STORE, "Verify Stock"), (CASHIER, "Verify Cash")):

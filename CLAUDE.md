@@ -92,6 +92,12 @@ Repo: git@github-mobilesales:kumuduraj/mobilesales.git (github.com/kumuduraj/mob
 21. Commit-only checks (real threads, races, install / uninstall) run on a disposable site (mst2.local) through
     mobilesales/perf/*, never in the rollback suite and never on agrosys. mobilesales/perf/seed.py is the
     performance volume (own company "_MS Perf Co"); restore mstest.local from its pre-seed backup afterwards.
+22. mstest.local / mst2.local scheduler always disabled; check before any long-running job
+    (`bench --site mstest.local scheduler status`). Their jobs would run on the shared AgroPublic workers. After a
+    restore or a new site, disable it again. The scheduler flag does not stop jobs a command enqueues itself:
+    migrate test sites with `bench --site mstest.local migrate --skip-search-index`. Long jobs (seed, profiling) run under `nice -n 10 ionice -c3`, not
+    08:00–18:00 Colombo if agrosys / Gills response times measurably suffer (check /api/method/ping before and
+    during), and pause if available memory falls below 1 GB.
 
 ## Definition of done for EVERY task
 1. `bench --site mstest.local migrate` and `bench --site agrosys.evonet.lk migrate` both pass.

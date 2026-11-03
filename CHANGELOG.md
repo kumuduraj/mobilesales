@@ -51,7 +51,17 @@ Phone:
 
 20:00 Day Report email: skipped (one log line, nothing queued) while the site has no default outgoing Email Account.
 
-Performance (10 agents × 60 days × 30 visits; docs/PERFORMANCE.md): PERF_SUMMARY
+Performance (10 agents × 60 days × 30 visits: 18,000 visits, 12,901 invoices, 80,000 stock ledger rows;
+docs/PERFORMANCE.md):
+- Phone API ≤ 0.14 s, settlement draft 0.05 s, every report ≤ 2.5 s median except Salesperson Performance and Daily
+  Trip Summary (4.6–4.7 s median over 600 trips; worst cold run 6.7 s). A visit costs about the same on day 60 as on day 1.
+- Reports load trips 50 at a time with one query per table (was about 19 queries per trip): 2–16× faster, same
+  output (compared on the full data set).
+- Two indexes on ERPNext tables through the patch `add_core_lookup_indexes` (also run on install, dropped on
+  uninstall): `ms_sales_invoice_item` (Sales Invoice Item.sales_invoice_item, every sales return) and
+  `ms_voucher_no` (Serial and Batch Bundle.voucher_no, every batch voucher). They were full table scans.
+- The perf seed no longer posts every van at the same second (which made ERPNext queue reposts) and runs the jobs
+  it enqueues inline instead of on the shared workers.
 
 Docs: ADMIN_GUIDE, USER_GUIDE_AGENT, USER_GUIDE_STORE_CASHIER, QUICK_START, DEFERRED, SECURITY_REVIEW, PERFORMANCE;
 SPEC acceptance tests ticked with the tests that prove them. Tools: mobilesales/perf (seed, timings, install_check).

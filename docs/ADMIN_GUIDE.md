@@ -213,6 +213,7 @@ Email Queue entry after the first real evening.
 | Phone: "Too many requests. Wait a minute and try again." | The per-user limit on pricing / submit / uploads (far above normal use) was hit, usually by a stuck script or a stuck button |
 | A website page fails but nothing is in the Error Log | Website render errors aren't logged there; open the page while logged in and read the traceback |
 | `.webmanifest` served as application/octet-stream | nginx MIME map; add `application/manifest+json webmanifest;` |
+| A Mobile Sales report shows "generating" / opens as a Prepared Report | Frappe switches a report to Prepared Report by itself after one run over 15 s. Untick *Prepared Report* on the Report record; see PERFORMANCE.md §4 for what makes a run slow |
 
 Restart rules: this bench restarts only with
 `sudo supervisorctl restart AgroPublic-web: AgroPublic-workers:` (server administrator), never `bench restart`.
@@ -233,6 +234,16 @@ Back up before every update: `bench --site <site> backup --with-files`. All auto
   itself: review them in Role Permission Manager.
 - Guards on standard documents exit after one cached lookup when a document touches nothing mobile
   (performance numbers: [PERFORMANCE.md](PERFORMANCE.md)).
+- The app adds two secondary indexes to ERPNext tables (patch `mobilesales.patches.v1_0.add_core_lookup_indexes`,
+  also run by install; dropped by uninstall). Without them these lookups scan the whole table:
+
+  | Table | Column | Index | Serves |
+  |---|---|---|---|
+  | `tabSales Invoice Item` | `sales_invoice_item` | `ms_sales_invoice_item` | rows already returned against an invoice row (every return, van or office) |
+  | `tabSerial and Batch Bundle` | `voucher_no` | `ms_voucher_no` | the batch bundles of a voucher (every batch line posted, returned or cancelled) |
+
+  The patch skips an index when ERPNext already has one leading with the same column. Never add or drop them by hand.
+  Details and measurements: [PERFORMANCE.md](PERFORMANCE.md).
 - Run the full test suite on the test site after every ERPNext update, before updating the live site.
 
 ## 11. Uninstall check

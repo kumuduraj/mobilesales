@@ -49,14 +49,15 @@ def run(repeat=3, guard_calls=2000):
 		results.append((kind, name, median, worst, target))
 		print(f"{kind:10} {name:45} median {median:7.3f}s  max {worst:7.3f}s  {'OK' if not target or worst < target else 'OVER ' + str(target)}", flush=True)
 
-	world = seed.ensure_world(0, add_days(nowdate(), -61))  # existing world, no new agents
+	with seed.jobs_inline():
+		world = seed.ensure_world(0, add_days(nowdate(), -61))  # existing world, no new agents
 	agents = frappe.get_all("Mobile Sales Agent", filters={"agent_name": ["like", f"{seed.PREFIX}%"]}, fields=["name", "user", "default_route"], order_by="name")
 	agent = frappe._dict(agents[0])
 	agent.route = frappe.get_all("Mobile Route Customer", filters={"parent": agent.default_route}, pluck="customer", order_by="sequence")
 	counts = {dt: frappe.db.count(dt) for dt in ("Mobile Trip", "Customer Visit", "Sales Invoice", "Payment Entry", "GL Entry", "Stock Ledger Entry")}
 	print("volume", counts, flush=True)
 	try:
-		with patch("mobilesales.services.day_report.queue_attach"):
+		with seed.jobs_inline():
 			# today's trip with a full day of visits, so price_cart and the settlement draft see a real day
 			today = getdate(nowdate())
 			stats = defaultdict(int)
