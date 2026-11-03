@@ -5,7 +5,8 @@ ownership of the trip / visit / settlement it touches. Inputs are validated and 
 on the server; client totals are never trusted."""
 
 import base64
-from functools import partial
+import binascii
+from functools import partial, wraps
 
 import frappe
 from frappe import _
@@ -53,6 +54,7 @@ OUTCOMES = ("Sale", "No Sale", "Collection Only", "Shop Closed", "Return Only")
 PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 PHOTO_MAX_BYTES = 5 * 1024 * 1024
 SEARCH_LIMIT = 20
+SEARCH_MAX_CHARS = 140
 
 
 # Access helpers
@@ -107,6 +109,31 @@ def own_visit(name):
 	visit = frappe.get_doc("Customer Visit", name)
 	own_trip(visit.mobile_trip)
 	return visit
+
+
+def throttle(limit, seconds=60):
+	"""Per-user cap on the expensive calls (pricing, submit, uploads, invoice lists): far above a real day's
+	pace, it only stops runaway loops and scripted use. Per user, never per IP: agents share carrier IPs."""
+
+	def decorator(fn):
+		@wraps(fn)
+		def wrapper(*args, **kwargs):
+			if getattr(frappe.local, "request", None):
+				key = frappe.cache.make_key(f"mobilesales:throttle:{fn.__name__}:{frappe.session.user}")
+				count = frappe.cache.incrby(key, 1)
+				if count == 1:
+					frappe.cache.expire(key, seconds)
+				if count > limit:
+					frappe.throw(_("Too many requests. Wait a minute and try again."), frappe.RateLimitExceededError)
+			return fn(*args, **kwargs)
+
+		return wrapper
+
+	return decorator
+
+
+def search_text(q) -> str:
+	return cstr(q).strip()[:SEARCH_MAX_CHARS]
 
 
 # Context and van stock
@@ -233,7 +260,7 @@ def get_route_plan(trip: str) -> list[dict]:
 @frappe.whitelist()
 def search_customers(q: str = "") -> list[dict]:
 	require_roles()
-	q = (q or "").strip()
+	q = search_text(q)
 	if len(q) < 2:
 		return []
 	like = f"%{q}%"
@@ -287,9 +314,14 @@ def return_invoice_query(doctype, txt, searchfield, start, page_len, filters):
 		"name": ["like", f"%{txt}%"],
 	}
 	if filters.item_code:
+		# this customer's invoices with the item only (not every invoice of the item, company wide)
 		conditions["name"] = [
 			"in",
-			frappe.get_all("Sales Invoice Item", filters={"item_code": filters.item_code, "docstatus": 1}, pluck="parent")
+			frappe.db.sql_list(
+				"""select distinct i.parent from `tabSales Invoice Item` i join `tabSales Invoice` s on s.name = i.parent
+				where i.item_code = %s and i.docstatus = 1 and s.customer = %s and s.company = %s and s.name like %s""",
+				(filters.item_code, filters.customer, filters.company, f"%{txt}%"),
+			)
 			or [""],
 		]
 	return frappe.get_all(
@@ -325,6 +357,7 @@ def get_returnable_lines(invoice: str, customer: str) -> list[dict]:
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_customer_invoices(customer: str) -> list[dict]:
 	"""The customer's recent submitted, non-return invoices for the return picker, newest first, with what
 	tells look-alike numbers apart: date, qty still returnable per item, total and what is still owed."""
@@ -350,7 +383,7 @@ def get_customer_invoices(customer: str) -> list[dict]:
 def search_items(q: str = "") -> list[dict]:
 	"""Active stock items without batches for returns without an invoice."""
 	require_roles()
-	q = (q or "").strip()
+	q = search_text(q)
 	if len(q) < 2:
 		return []
 	like = f"%{q}%"
@@ -441,6 +474,7 @@ def _previous_rows(rows) -> list[dict]:
 
 
 @frappe.whitelist()
+@throttle(120)
 def price_cart(
 	trip: str,
 	customer: str,
@@ -481,7 +515,10 @@ def price_cart(
 	for row in return_rows:
 		cart.append("return_items", row)
 	for row in _previous_rows(collect_previous):
-		row["outstanding"] = flt(frappe.db.get_value("Sales Invoice", row["sales_invoice"], "outstanding_amount"))
+		invoice = frappe.db.get_value("Sales Invoice", row["sales_invoice"], ["customer", "company", "outstanding_amount"], as_dict=True)
+		if not invoice or invoice.customer != customer or invoice.company != doc.company:
+			frappe.throw(_("Sales Invoice {0} is not an invoice of {1}.").format(row["sales_invoice"], customer))
+		row["outstanding"] = flt(invoice.outstanding_amount)
 		cart.append("collect_previous", row)
 	notes = returns.validate_returns(cart, agent, settings) if return_rows else []
 	result = {
@@ -584,6 +621,7 @@ def _visit_summary(visit) -> dict:
 
 
 @frappe.whitelist()
+@throttle(30)
 def submit_visit(payload: str | dict) -> dict:
 	"""Create and submit a Customer Visit (and its invoice / payment). Idempotent on client_ref.
 	A refused visit is logged in Mobile Visit Rejection, so the supervisor sees what the agent was told."""
@@ -679,6 +717,7 @@ def _submit_visit(data) -> dict:
 
 
 @frappe.whitelist()
+@throttle(20)
 def upload_visit_photo(
 	filename: str, filedata: str, visit: str | None = None, client_ref: str | None = None
 ) -> dict:
@@ -688,7 +727,13 @@ def upload_visit_photo(
 		visit = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 	doc = own_visit(visit)
 
-	content = base64.b64decode((filedata or "").split(",")[-1], validate=True)
+	encoded = cstr(filedata).split(",")[-1]
+	if len(encoded) > PHOTO_MAX_BYTES * 4 // 3 + 4:  # checked before decoding
+		frappe.throw(_("Photo is larger than 5 MB."))
+	try:
+		content = base64.b64decode(encoded, validate=True)
+	except (binascii.Error, ValueError):
+		frappe.throw(_("Only JPEG, PNG or WebP photos can be uploaded."))
 	if len(content) > PHOTO_MAX_BYTES:
 		frappe.throw(_("Photo is larger than 5 MB."))
 	content_type = _image_type(content)
@@ -706,6 +751,13 @@ def upload_visit_photo(
 			"content": content,
 		}
 	)
+	# A retake replaces the earlier check-in photo (one per visit, no orphan files).
+	for old in frappe.get_all(
+		"File",
+		filters={"attached_to_doctype": "Customer Visit", "attached_to_name": doc.name, "attached_to_field": "check_in_photo"},
+		pluck="name",
+	):
+		frappe.delete_doc("File", old, ignore_permissions=True)
 	file.flags.ignore_permissions = True
 	file.insert()
 	doc.db_set("check_in_photo", file.file_url, update_modified=False)
@@ -805,6 +857,7 @@ def settlement_warnings(doc) -> list[str]:
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_settlement_draft(trip: str) -> dict:
 	"""The trip's open settlement as saved, or a computed draft when none exists yet (nothing saved)."""
 	doc = own_trip(trip, roles=SETTLEMENT_VIEW_ROLES + (AGENT_ROLE,))
@@ -862,6 +915,7 @@ def submit_settlement_for_verification(settlement_name: str) -> dict:
 
 
 @frappe.whitelist()
+@throttle(30)
 def get_receipt_escpos(doctype: str, name: str, width: int = 48) -> dict:
 	"""Plain-text receipt lines (for a later ESC/POS hand-off) for the agent's own mobile documents."""
 	require_roles()

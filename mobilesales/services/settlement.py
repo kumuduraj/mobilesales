@@ -8,7 +8,7 @@ from frappe.utils import flt, nowdate, nowtime
 from mobilesales.overrides.guards import INTERNAL_FLAG, SETTLEMENT_FLAG
 from mobilesales.services import reconciliation
 from mobilesales.services import settings as ms_settings
-from mobilesales.services import stock
+from mobilesales.services import stock, vouchers
 
 AGENT, STORE_KEEPER, CASHIER = "Mobile Sales Agent", "Mobile Sales Store Keeper", "Mobile Sales Cashier"
 SUPERVISOR, SYSTEM_MANAGER = "Mobile Sales Supervisor", "System Manager"
@@ -66,6 +66,10 @@ def validate(doc):
 		frappe.throw(_("Mobile Trip {0} already has settlement {1}.").format(frappe.bold(trip.name), frappe.bold(other)))
 
 	before = None if doc.is_new() else doc.get_doc_before_save()
+	for fieldname in POSTING_LINKS:  # validate runs before submit only, so these are never ours yet
+		doc.set(fieldname, None)
+	for fieldname in VERIFIERS:  # only set_verifiers changes them, on a workflow transition
+		doc.set(fieldname, before.get(fieldname) if before else None)
 	if before:
 		validate_edit_rules(doc, before)
 		set_verifiers(doc, before)
@@ -74,6 +78,13 @@ def validate(doc):
 			frappe.throw(_("Row {0}: returned and damaged quantities cannot be negative.").format(row.idx))
 	reconciliation.refresh_settlement(doc)
 
+
+# Set by post_settlement (db_set) and the workflow only: never from the client, a REST save or an amendment.
+POSTING_LINKS = (
+	"return_entry", "damage_entry", "shortage_entry", "return_damage_entry", "return_shortage_entry",
+	"recovery_journal", "cash_journal", "variance_journal",
+)  # fmt: skip
+VERIFIERS = ("verified_by_store", "verified_by_cashier")
 
 GROUP_LABELS = {"stock": "stock counts", "cash": "cash", "returns": "customer return counts"}
 
@@ -377,7 +388,7 @@ def check_post_conditions(doc, trip, agent):
 
 def reverse_settlement(doc):
 	"""Cancel every posting in reverse, then the trip goes back to Settling."""
-	vouchers = [
+	posted = [
 		(doctype, doc.get(fieldname))
 		for doctype, fieldname in (
 			("Journal Entry", "variance_journal"),
@@ -393,12 +404,12 @@ def reverse_settlement(doc):
 	]
 	# The trip (still submitted) lists these Stock Entries; unlink first or Frappe's back-link check
 	# refuses to cancel them.
-	stock_entries = [name for doctype, name in vouchers if doctype == "Stock Entry"]
+	stock_entries = [name for doctype, name in posted if doctype == "Stock Entry"]
 	if stock_entries:
 		frappe.db.delete("Mobile Trip Stock Entry", {"parent": doc.mobile_trip, "stock_entry": ["in", stock_entries]})
-	for doctype, name in vouchers:
-		voucher = frappe.get_doc(doctype, name)
-		if voucher.docstatus == 1:
-			voucher.flags.ignore_permissions = True
-			voucher.cancel()
+	for doctype, name in posted:
+		back_links = {"mobile_trip": doc.mobile_trip}
+		if doctype == "Journal Entry":
+			back_links["mobile_settlement"] = doc.name
+		vouchers.cancel_linked(doctype, name, **back_links)
 	frappe.db.set_value("Mobile Trip", doc.mobile_trip, {"status": "Settling", "settlement": None})

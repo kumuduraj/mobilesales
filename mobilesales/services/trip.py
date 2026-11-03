@@ -10,7 +10,7 @@ from frappe.utils import flt, nowdate
 
 from mobilesales.overrides import guards
 from mobilesales.services import settings as ms_settings
-from mobilesales.services import stock
+from mobilesales.services import stock, vouchers
 
 CLOSED_STATUSES = ("Settled", "Cancelled")
 SUPERVISOR_ROLES = ("Mobile Sales Supervisor", "System Manager")
@@ -20,8 +20,19 @@ TOP_UP_ROLES = ("Mobile Sales Supervisor", "Mobile Sales Store Keeper", "System 
 # Document events
 
 
+# Set by the app only (db_set, link_stock_entry, update_trip_summary): kept as stored on update after submit.
+SYSTEM_FIELDS = (
+	"status", "opening_float_journal", "stock_entries", "visits", "sales_visits", "no_sale_visits", "invoices",
+	"invoiced_amount", "collected_amount", "settlement",
+)  # fmt: skip
+
+
 def validate_trip(trip):
 	settings = ms_settings.get_settings()
+	# validate runs before submit only: postings are made on submit, never typed in or kept by an amendment
+	trip.set("stock_entries", [])
+	trip.opening_float_journal = None
+	trip.settlement = None
 	if not settings.company:
 		frappe.throw(_("Set Company in Mobile Sales Settings first."))
 
@@ -145,18 +156,10 @@ def before_cancel(trip):
 
 def on_cancel(trip):
 	"""Runs after the trip row is cancelled and before Frappe's back-link check."""
-	if trip.opening_float_journal:
-		_cancel_if_submitted("Journal Entry", trip.opening_float_journal)
+	vouchers.cancel_linked("Journal Entry", trip.opening_float_journal, mobile_trip=trip.name)
 	for row in reversed(trip.stock_entries):
-		_cancel_if_submitted("Stock Entry", row.stock_entry)
+		vouchers.cancel_linked("Stock Entry", row.stock_entry, mobile_trip=trip.name)
 	trip.db_set("status", "Cancelled")
-
-
-def _cancel_if_submitted(doctype, name):
-	doc = frappe.get_doc(doctype, name)
-	if doc.docstatus == 1:
-		doc.flags.ignore_permissions = True
-		doc.cancel()
 
 
 def update_trip_summary(trip_name):

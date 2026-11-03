@@ -4,6 +4,7 @@
 from frappe.model.document import Document
 
 from mobilesales.services import visit as visit_service
+from mobilesales.services import vouchers
 
 
 class CustomerVisit(Document):
@@ -12,6 +13,9 @@ class CustomerVisit(Document):
 
 	def on_submit(self):
 		visit_service.on_submit(self)
+
+	def before_update_after_submit(self):
+		vouchers.keep_system_fields(self, visit_service.VOUCHER_LINKS)
 
 	def before_cancel(self):
 		visit_service.before_cancel(self)
