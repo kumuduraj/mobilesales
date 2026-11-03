@@ -70,10 +70,21 @@ def supervisors() -> list:
 	)
 
 
+def outgoing_email_ready() -> bool:
+	"""A default outgoing Email Account, or a mail server in the site config (docs/ADMIN_GUIDE.md: email)."""
+	return bool(
+		frappe.db.exists("Email Account", {"enable_outgoing": 1, "default_outgoing": 1}) or frappe.conf.get("mail_server")
+	)
+
+
 def send_daily_reports(day=None):
 	"""Scheduler, 20:00: one email with every Day Report of the trips settled today. Skipped when switched off
-	in Mobile Sales Settings, when nothing was settled or when there is no supervisor to send to."""
+	in Mobile Sales Settings, when the site has no outgoing email yet (one log line, no Error Log, nothing
+	queued), when nothing was settled or when there is no supervisor to send to."""
 	if not ms_settings.get_settings().daily_report_email:
+		return None
+	if not outgoing_email_ready():
+		frappe.logger("mobilesales").info("Daily Report Email skipped: no default outgoing Email Account on this site")
 		return None
 	settlements = settled_today(day)
 	recipients = [r for r in supervisors() if r]

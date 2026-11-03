@@ -333,6 +333,21 @@ describe("screens", () => {
 		expect(seen.text).toContain("825.00")
 	})
 
+	it("Today without a trip: what to do, and the last trip's summary", async () => {
+		const noTrip = boot(AGENT, null)
+		noTrip.context.last_trip = { name: "MTRIP-26-00005", status: "Settled", trip_date: "2026-11-02", invoiced_amount: 4536 }
+		const text = await render(noTrip, "/")
+		expect(problems).toEqual([])
+		expect(text.match(/No trip loaded/g)).toHaveLength(1)
+		expect(text).toContain("Ask the store keeper to load your van.")
+		expect(text).toContain("Last trip MTRIP-26-00005 · Settled · sales LKR 4,536.00")
+
+		const first = await render(boot(AGENT, null), "/") // a new agent: no last trip line
+		expect(problems).toEqual([])
+		expect(first).toContain("Ask the store keeper to load your van.")
+		expect(first).not.toContain("Last trip")
+	})
+
 	it("Today offers Reopen Trip while Settling", async () => {
 		const text = await render(boot(AGENT, trip("Settling")), "/")
 		expect(problems).toEqual([])

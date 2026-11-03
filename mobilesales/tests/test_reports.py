@@ -316,8 +316,13 @@ class TestReports(SettlementTestBase):
 		with patch("frappe.sendmail") as sendmail, patch("frappe.utils.pdf.get_pdf", return_value=blank_pdf()):
 			self.assertIsNone(day_report.send_daily_reports())
 			self.set_setting("daily_report_email", 1)
-			self.assertIsNone(day_report.send_daily_reports(add_days(nowdate(), 1)))
-			self.assertEqual(day_report.send_daily_reports(), [done.name])
+			# switched on, but no outgoing email account yet (agrosys today): skipped, nothing queued
+			with patch.object(day_report, "outgoing_email_ready", return_value=False):
+				self.assertIsNone(day_report.send_daily_reports())
+			sendmail.assert_not_called()
+			with patch.object(day_report, "outgoing_email_ready", return_value=True):
+				self.assertIsNone(day_report.send_daily_reports(add_days(nowdate(), 1)))
+				self.assertEqual(day_report.send_daily_reports(), [done.name])
 		sendmail.assert_called_once()
 		mail = sendmail.call_args.kwargs
 		self.assertIn(frappe.db.get_value("User", SUPERVISOR, "email"), mail["recipients"])

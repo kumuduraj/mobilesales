@@ -13,7 +13,7 @@ from mobilesales.patches.v0_6 import create_vehicles_from_agent_vans
 from mobilesales.services import settlement
 from mobilesales.services import trip as trip_service
 from mobilesales.tests.test_settlement import SUPERVISOR, SettlementTestBase
-from mobilesales.tests.utils import PREFIX, as_user
+from mobilesales.tests.utils import PREFIX, as_user, make_receipt
 
 
 class TestIntegrity(SettlementTestBase):
@@ -135,6 +135,17 @@ class TestIntegrity(SettlementTestBase):
 			self.assertNotIn(delivered.name, [r[0] for r in picker])
 			with self.assertRaisesRegex(frappe.ValidationError, "delivered with a Delivery Note"):
 				api.price_cart(trip.name, self.customer, [], returns_items=[line])
+
+	def test_item_without_price_is_never_sold_at_zero(self):
+		unpriced = self.make_item(f"{PREFIX} Unpriced Item")
+		make_receipt(self.company, unpriced, 5, self.store)
+		trip = self.run_trip([(unpriced, 2)], end_day=False)
+		with as_user(self.agent_a.user):
+			with self.assertRaisesRegex(frappe.ValidationError, "has no price in price list"):
+				api.price_cart(trip.name, self.customer, [{"item_code": unpriced, "qty": 1}])
+			with self.assertRaisesRegex(frappe.ValidationError, "has no price in price list"):
+				api.submit_visit({"client_ref": "int-noprice", "mobile_trip": trip.name, "customer": self.customer,
+					"outcome": "Sale", "sale_items": [{"item_code": unpriced, "qty": 1}], "collect_amount": 0})  # fmt: skip
 
 	# retries and double taps
 

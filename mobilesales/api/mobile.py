@@ -143,7 +143,7 @@ def search_text(q) -> str:
 def get_context() -> dict:
 	require_roles()
 	agent = session_agent()
-	trip = None
+	trip = last_trip = None
 	if agent:
 		trip = frappe.db.get_value(
 			"Mobile Trip",
@@ -171,6 +171,15 @@ def get_context() -> dict:
 			as_dict=True,
 			order_by="creation desc",
 		)
+		if not trip:
+			# Today without a trip: "Last trip MTRIP-… · Settled · sales …"
+			last_trip = frappe.db.get_value(
+				"Mobile Trip",
+				{"agent": agent.name, "docstatus": 1},
+				["name", "status", "trip_date", "invoiced_amount"],
+				as_dict=True,
+				order_by="trip_date desc, creation desc",
+			)
 		agent.pop("cash_account", None)
 
 	settings = ms_settings.get_settings()
@@ -183,6 +192,7 @@ def get_context() -> dict:
 		"full_name": frappe.utils.get_fullname(frappe.session.user),
 		"agent": agent,
 		"trip": trip,
+		"last_trip": last_trip,
 		"settings": flags,
 		"no_sale_reasons": frappe.get_all(
 			"Visit No Sale Reason", fields=["name", "category", "requires_remark"], order_by="name asc"
