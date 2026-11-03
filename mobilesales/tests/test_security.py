@@ -30,6 +30,7 @@ class TestSecurity(SettlementTestBase):
 			{"doctype": "Item Price", "item_code": cls.plain_item, "price_list": cls.buying_list, "price_list_rate": 40}
 		).insert().name
 		cls.selling_price = frappe.db.get_value("Item Price", {"item_code": cls.plain_item, "price_list": cls.price_list})
+		cls.settings.update({"default_customer_group": leaf("Customer Group"), "default_territory": leaf("Territory")})
 		cls.other_customer = frappe.get_doc(
 			{"doctype": "Customer", "customer_name": f"{PREFIX} Other Customer", "customer_group": leaf("Customer Group"), "territory": leaf("Territory")}
 		).insert().name  # fmt: skip
