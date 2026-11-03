@@ -2,6 +2,7 @@ import frappe
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 from frappe.model.naming import NamingSeries
 
+from mobilesales.setup.indexes import add_core_indexes, drop_core_indexes
 from mobilesales.setup.permissions import check_standard_permission_drift, ensure_agent_permissions, remove_agent_permissions
 
 MOBILE_SINV_SERIES = "MB-SINV-.YY.-.#####"
@@ -38,6 +39,7 @@ def after_install():
 	create_default_return_reasons()
 	add_mobile_invoice_series()
 	ensure_agent_permissions()
+	add_core_indexes()  # install marks the patches done without running them
 
 
 def after_migrate():
@@ -56,13 +58,15 @@ def after_migrate():
 def before_uninstall():
 	"""Run by `uninstall-app mobilesales` before the app's DocTypes are dropped. The standard DocTypes get their
 	standard permissions back and nothing is left pointing at the app's DocTypes. Data stays: submitted invoices,
-	payments, stock entries and journals remain as standard documents with their ledgers."""
+	payments, stock entries and journals remain as standard documents with their ledgers. The app's indexes on ERPNext
+	tables are dropped."""
 	remove_agent_permissions()
 	app_doctypes = frappe.get_all("DocType", filters={"module": "Mobile Sales"}, pluck="name")
 	for name in frappe.get_all("User Permission", filters={"allow": ["in", app_doctypes or [""]]}, pluck="name"):
 		frappe.delete_doc("User Permission", name, ignore_permissions=True)
 	for workflow in frappe.get_all("Workflow", filters={"document_type": ["in", app_doctypes or [""]]}, pluck="name"):
 		frappe.delete_doc("Workflow", workflow, ignore_permissions=True, force=True)
+	drop_core_indexes()
 
 
 def add_mobile_invoice_series():

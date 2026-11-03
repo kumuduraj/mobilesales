@@ -52,6 +52,10 @@ def setup_and_day():
 	"""ADMIN_GUIDE §3 in order, through the same buttons and roles a person uses, then one full day."""
 	guard()
 	frappe.set_user("Administrator")
+	from mobilesales.setup.indexes import CORE_INDEXES
+
+	assert all(frappe.db.has_index(f"tab{dt}", name) for dt, _f, name in CORE_INDEXES), "core lookup indexes missing after install"
+	ok("after install: the app's indexes on Sales Invoice Item / Serial and Batch Bundle are there")
 	co = frappe.get_doc("Company", company())
 	root = frappe.db.get_value("Warehouse", {"company": co.name, "is_group": 1, "parent_warehouse": ["is", "not set"]})
 
@@ -305,13 +309,16 @@ def after_uninstall():
 	perms = {dt: frappe.db.count("Custom DocPerm", {"parent": dt, "role": ["like", "Mobile Sales%"]}) for dt in EXTENDED_DOCTYPES}
 	copies = {dt: frappe.db.count("Custom DocPerm", {"parent": dt}) for dt in EXTENDED_DOCTYPES}
 	workflow = frappe.db.exists("Workflow", "Mobile Settlement Approval")
+	from mobilesales.setup.indexes import CORE_INDEXES
+
+	indexes = [name for dt, _f, name in CORE_INDEXES if frappe.db.has_index(f"tab{dt}", name)]
 	user_perms = frappe.db.count("User Permission", {"allow": ["in", ["Mobile Sales Agent", "Mobile Trip", "Customer Visit", "Mobile Settlement"]]})
-	report = {"custom_fields": left_fields, "doctypes": left_doctypes, "roles": roles, "workspace": workspace, "workflow": workflow,
+	report = {"custom_fields": left_fields, "doctypes": left_doctypes, "roles": roles, "workspace": workspace, "workflow": workflow, "indexes": indexes,
 		"user_permissions": user_perms, "mobile_role_perms": {k: v for k, v in perms.items() if v},
 		"custom_docperm_copies": {k: v for k, v in copies.items() if v}}  # fmt: skip
 	print(report, flush=True)
-	assert not (left_fields or left_doctypes or workspace or workflow or user_perms or report["mobile_role_perms"]), report
+	assert not (left_fields or left_doctypes or workspace or workflow or indexes or user_perms or report["mobile_role_perms"]), report
 	assert not report["custom_docperm_copies"], report  # this site had no other Custom DocPerm
-	ok("after uninstall: no custom fields, DocTypes, workspace, workflow, User Permissions, role rules or permission copies left (the four roles stay)")
+	ok("after uninstall: no custom fields, DocTypes, workspace, workflow, indexes, User Permissions, role rules or permission copies left (the four roles stay)")
 	standard_flow()
 	ok("after uninstall: standard flow still works")

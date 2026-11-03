@@ -10,8 +10,10 @@ from frappe.utils import flt, now_datetime
 from mobilesales.api import mobile as api
 from mobilesales.patches.v0_5 import set_visit_off_route
 from mobilesales.patches.v0_6 import create_vehicles_from_agent_vans
+from mobilesales.patches.v1_0 import add_core_lookup_indexes
 from mobilesales.services import settlement
 from mobilesales.services import trip as trip_service
+from mobilesales.setup.indexes import CORE_INDEXES
 from mobilesales.tests.test_settlement import SUPERVISOR, SettlementTestBase
 from mobilesales.tests.utils import PREFIX, as_user, make_receipt
 
@@ -209,3 +211,15 @@ class TestIntegrity(SettlementTestBase):
 		create_vehicles_from_agent_vans.execute()
 		self.assertEqual(after_first[0], vehicles + 1)
 		self.assertEqual((frappe.db.count("Mobile Vehicle"), frappe.get_all("Mobile Sales Agent", fields=["name", "default_vehicle"], order_by="name")), after_first)
+
+	def test_core_lookup_indexes(self):
+		"""The migrate added the app's two indexes, the lookups use them, and the patch again is a no-op (no DDL:
+		an ALTER would commit, which the test base refuses)."""
+		for doctype, fieldname, index_name in CORE_INDEXES:
+			self.assertTrue(index_name.startswith("ms_"), index_name)  # never clashes with an ERPNext index name
+			self.assertTrue(frappe.db.has_index(f"tab{doctype}", index_name), index_name)
+			plan = frappe.db.sql(f"explain select name from `tab{doctype}` where `{fieldname}` = 'x'", as_dict=True)
+			self.assertEqual(plan[0].get("key"), index_name, plan)
+		for _run in range(2):
+			add_core_lookup_indexes.execute()
+		self.assertEqual(len(frappe.db.sql("show index from `tabSales Invoice Item` where Column_name = 'sales_invoice_item'")), 1)
