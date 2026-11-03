@@ -119,53 +119,165 @@ def route_customers(route) -> list:
 # per-trip facts
 
 
+VISIT_FIELDS = [
+	"name", "mobile_trip", "visit_datetime", "customer", "customer_name", "outcome", "no_sale_reason", "remarks",
+	"off_route", "latitude", "longitude", "sales_invoice", "payment_entry", "credit_journal", "credit_notes",
+	"rounded_total", "collect_amount", "total_collected", "return_total", "credit_applied", "discount_amount",
+	"additional_discount_percentage",
+]  # fmt: skip
+INVOICE_FIELDS = [
+	"name", "mobile_trip", "customer", "customer_name", "is_return", "return_against", "posting_date", "total",
+	"net_total", "total_taxes_and_charges", "discount_amount", "grand_total", "rounded_total", "disable_rounded_total",
+	"outstanding_amount",
+]  # fmt: skip
+RETURN_LINE_FIELDS = [
+	"parent", "item_code", "item_name", "qty", "uom", "stock_qty", "rate", "amount", "against_invoice", "return_reason",
+	"condition", "remarks", "credit_note", "batch_info",
+]  # fmt: skip
+CHUNK = 50  # trips loaded together: one query per table, IN lists of a few thousand names at most
+
+
 def trip_documents(trip_name) -> frappe._dict:
 	"""Every submitted document of one trip, loaded once."""
+	trip = frappe.db.get_value("Mobile Trip", trip_name, ["name", "route", "van_warehouse"], as_dict=True)
+	return trips_documents([trip])[trip_name]
+
+
+def iter_trip_documents(trips, summary=True):
+	"""(trip, documents) for every trip row, loaded CHUNK trips at a time (the reports run over hundreds of trips;
+	one set of queries per trip made them grow with the period). summary=False leaves out what only trip_summary()
+	reads: sale line counts, payment references and the van's stock ledger."""
+	for index in range(0, len(trips), CHUNK):
+		chunk = trips[index : index + CHUNK]
+		docs = trips_documents(chunk, summary)
+		for trip in chunk:
+			yield trip, docs[trip.name]
+
+
+def by_key(rows, key) -> dict:
+	out = defaultdict(list)
+	for row in rows:
+		out[row[key]].append(row)
+	return out
+
+
+def trips_documents(trips, summary=True) -> dict:
+	"""{trip: documents} for trip rows (name, route, van_warehouse): the visits, invoices, payments, set-offs and
+	settlement of each trip, plus what trip_summary() needs (route plan, visit discounts, sale line count, payment
+	references, van stock by purpose) and the visits' return lines. One query per table for all the trips."""
+	names = [t.name for t in trips]
 	visits = frappe.get_all(
 		"Customer Visit",
-		filters={"mobile_trip": trip_name, "docstatus": 1},
-		fields=[
-			"name", "visit_datetime", "customer", "customer_name", "outcome", "no_sale_reason", "remarks", "off_route",
-			"latitude", "longitude", "sales_invoice", "payment_entry", "credit_journal", "credit_notes", "rounded_total",
-			"collect_amount", "total_collected", "return_total", "credit_applied", "discount_amount",
-			"additional_discount_percentage",
-		],
+		filters={"mobile_trip": ["in", names], "docstatus": 1},
+		fields=VISIT_FIELDS,
 		order_by="visit_datetime asc, name asc",
-	)  # fmt: skip
+	)
 	invoices = frappe.get_all(
 		"Sales Invoice",
-		filters={"mobile_trip": trip_name, "docstatus": 1},
-		fields=[
-			"name", "customer", "customer_name", "is_return", "return_against", "posting_date", "total", "net_total",
-			"total_taxes_and_charges", "discount_amount", "grand_total", "rounded_total", "disable_rounded_total",
-			"outstanding_amount",
-		],
+		filters={"mobile_trip": ["in", names], "docstatus": 1},
+		fields=INVOICE_FIELDS,
 		order_by="posting_date asc, posting_time asc, name asc",
-	)  # fmt: skip
+	)
 	payments = frappe.get_all(
 		"Payment Entry",
-		filters={"mobile_trip": trip_name, "docstatus": 1},
-		fields=["name", "party", "party_name", "mode_of_payment", "paid_amount", "reference_no", "posting_date"],
+		filters={"mobile_trip": ["in", names], "docstatus": 1},
+		fields=["name", "mobile_trip", "party", "party_name", "mode_of_payment", "paid_amount", "reference_no", "posting_date"],
 		order_by="posting_date asc, name asc",
 	)
 	journals = frappe.get_all(
-		"Journal Entry", filters={"mobile_trip": trip_name, "docstatus": 1, "voucher_type": "Credit Note"}, pluck="name"
+		"Journal Entry",
+		filters={"mobile_trip": ["in", names], "docstatus": 1, "voucher_type": "Credit Note"},
+		fields=["name", "mobile_trip"],
+		order_by="creation desc",  # the order frappe.get_all gave the one-trip query
 	)
-	settlement = frappe.get_all(
+	journal_rows = by_key(
+		frappe.get_all(
+			"Journal Entry Account",
+			filters={"parent": ["in", [j.name for j in journals] or [""]], "reference_type": "Sales Invoice"},
+			fields=prints.JOURNAL_ROW_FIELDS,
+			order_by="parent asc, idx asc",
+		),
+		"parent",
+	)
+	visit_names = [v.name for v in visits]
+	sales = [i for i in invoices if not i.is_return]
+	refs = by_key(
+		frappe.get_all(
+			"Payment Entry Reference",
+			filters={"parent": ["in", [p.name for p in payments] or [""]], "parenttype": "Payment Entry"},
+			fields=["parent", "reference_name", "allocated_amount"],
+			order_by="parent asc, idx asc",
+		)
+		if summary
+		else [],
+		"parent",
+	)
+	line_counts = sale_line_counts([i.name for i in sales]) if summary else {}
+	returns = by_key(
+		frappe.get_all(
+			"Customer Visit Return Item",
+			filters={"parent": ["in", visit_names or [""]], "parenttype": "Customer Visit"},
+			fields=RETURN_LINE_FIELDS,
+			order_by="parent asc, idx asc",
+		),
+		"parent",
+	)
+	discounts = visit_discounts(visit_names)
+	plans = {route: route_customers(route) for route in {t.route for t in trips if t.route}}
+	stock = stocks_by_purpose(trips, [i.name for i in sales], {i.name: i.mobile_trip for i in sales}) if summary else {}
+	settlements = trip_settlements(names)
+	visits_of, invoices_of, payments_of = by_key(visits, "mobile_trip"), by_key(invoices, "mobile_trip"), by_key(payments, "mobile_trip")
+	journals_of = by_key(journals, "mobile_trip")
+	out = {}
+	for trip in trips:
+		trip_visits = visits_of.get(trip.name, [])
+		trip_invoices = invoices_of.get(trip.name, [])
+		trip_payments = payments_of.get(trip.name, [])
+		trip_sales = [i for i in trip_invoices if not i.is_return]
+		out[trip.name] = frappe._dict(
+			visits=trip_visits,
+			sales=trip_sales,
+			notes=[i for i in trip_invoices if i.is_return],
+			payments=trip_payments,
+			set_offs=[p for j in journals_of.get(trip.name, []) for p in prints.journal_pairs(j.name, journal_rows.get(j.name, []))],
+			settlement=settlements.get(trip.name),
+			route_plan=plans.get(trip.route, []),
+			discounts=only(discounts, [v.name for v in trip_visits]),
+			line_count=sum(line_counts.get(i.name, 0) for i in trip_sales),
+			references=[r for p in trip_payments for r in refs.get(p.name, [])],
+			return_lines=[line for v in trip_visits for line in returns.get(v.name, [])],
+			stock=stock.get(trip.name) or defaultdict(empty_stock_row),
+		)
+	return out
+
+
+def trip_settlements(trip_names) -> dict:
+	"""{trip: its live settlement (submitted before draft, newest first)} with every child table, as plain rows."""
+	parents = frappe.get_all(
 		"Mobile Settlement",
-		filters={"mobile_trip": trip_name, "docstatus": ["<", 2]},
-		fields=["name"],
+		filters={"mobile_trip": ["in", trip_names], "docstatus": ["<", 2]},
+		fields=["*"],
 		order_by="docstatus desc, modified desc",
-		limit=1,
 	)
-	return frappe._dict(
-		visits=visits,
-		sales=[i for i in invoices if not i.is_return],
-		notes=[i for i in invoices if i.is_return],
-		payments=payments,
-		set_offs=[p for j in journals for p in prints.journal_pairs(j)],
-		settlement=frappe.get_doc("Mobile Settlement", settlement[0].name) if settlement else None,
-	)
+	chosen = {}
+	for row in parents:
+		chosen.setdefault(row.mobile_trip, row)
+	if not chosen:
+		return {}
+	names = [row.name for row in chosen.values()]
+	for df in frappe.get_meta("Mobile Settlement").get_table_fields():
+		children = by_key(
+			frappe.get_all(
+				df.options,
+				filters={"parent": ["in", names], "parenttype": "Mobile Settlement", "parentfield": df.fieldname},
+				fields=["*"],
+				order_by="parent asc, idx asc",
+			),
+			"parent",
+		)
+		for row in chosen.values():
+			row[df.fieldname] = children.get(row.name, [])
+	return chosen
 
 
 def payable(invoice) -> float:
@@ -183,10 +295,33 @@ def sale_lines(invoice_names) -> list:
 	)
 
 
+def no_discount():
+	return frappe._dict(price_list_value=0.0, pricing_rule=0.0, line_manual=0.0)
+
+
+def only(discounts, visit_names) -> dict:
+	out = defaultdict(no_discount)
+	out.update({name: discounts[name] for name in visit_names if name in discounts})
+	return out
+
+
+def sale_line_counts(invoice_names) -> dict:
+	"""{invoice: number of lines}, from the parent index alone (the rows themselves are not read; the table only
+	ever belongs to Sales Invoice, so no parenttype test)."""
+	if not invoice_names:
+		return {}
+	return dict(
+		frappe.db.sql(
+			"""select parent, count(*) from `tabSales Invoice Item` where parent in %(names)s group by parent""",
+			{"names": invoice_names},
+		)
+	)
+
+
 def visit_discounts(visit_names) -> dict:
 	"""{visit: {price_list_value, pricing_rule, line_manual}} from the visit lines (pricing_rule_rate is kept
 	there: the manual discount applies on top of it, spec §5.1)."""
-	out = defaultdict(lambda: frappe._dict(price_list_value=0.0, pricing_rule=0.0, line_manual=0.0))
+	out = defaultdict(no_discount)
 	if not visit_names:
 		return out
 	for row in frappe.get_all(
@@ -203,28 +338,44 @@ def visit_discounts(visit_names) -> dict:
 	return out
 
 
+def empty_stock_row():
+	return frappe._dict(issued=0.0, topped_up=0.0, sold=0.0, issued_value=0.0, sold_value=0.0)
+
+
 def stock_by_purpose(trip, van) -> dict:
 	"""{item: {issued, topped_up, sold, issued_value, sold_value}} from the van's Stock Ledger."""
-	out = defaultdict(lambda: frappe._dict(issued=0.0, topped_up=0.0, sold=0.0, issued_value=0.0, sold_value=0.0))
+	trip_row = frappe._dict(name=trip, van_warehouse=van)
+	sales = frappe.get_all("Sales Invoice", filters={"mobile_trip": trip, "docstatus": 1, "is_return": 0}, pluck="name")
+	return stocks_by_purpose([trip_row], sales, dict.fromkeys(sales, trip)).get(trip) or defaultdict(empty_stock_row)
+
+
+def stocks_by_purpose(trips, sales, sale_trip) -> dict:
+	"""{trip: stock_by_purpose} for trip rows (name, van_warehouse); `sales` their sale invoices, `sale_trip`
+	invoice -> trip."""
 	entries = {
-		e.name: e.mobile_purpose
+		e.name: e
 		for e in frappe.get_all(
 			"Stock Entry",
-			filters={"mobile_trip": trip, "docstatus": 1, "mobile_purpose": ["in", ISSUE_PURPOSES]},
-			fields=["name", "mobile_purpose"],
+			filters={"mobile_trip": ["in", [t.name for t in trips]], "docstatus": 1, "mobile_purpose": ["in", ISSUE_PURPOSES]},
+			fields=["name", "mobile_purpose", "mobile_trip"],
 		)
 	}
-	sales = frappe.get_all("Sales Invoice", filters={"mobile_trip": trip, "docstatus": 1, "is_return": 0}, pluck="name")
 	if not (entries or sales):
-		return out
+		return {}
+	vans = {t.name: t.van_warehouse for t in trips}
+	out = defaultdict(lambda: defaultdict(empty_stock_row))
 	for sle in frappe.get_all(
 		"Stock Ledger Entry",
-		filters={"warehouse": van, "is_cancelled": 0, "voucher_no": ["in", list(entries) + sales]},
-		fields=["item_code", "voucher_type", "voucher_no", "actual_qty", "stock_value_difference"],
+		filters={"warehouse": ["in", list(set(vans.values()))], "is_cancelled": 0, "voucher_no": ["in", list(entries) + sales]},
+		fields=["item_code", "warehouse", "voucher_type", "voucher_no", "actual_qty", "stock_value_difference"],
 	):
-		row = out[sle.item_code]
-		if sle.voucher_type == "Stock Entry":
-			row["topped_up" if entries.get(sle.voucher_no) == "Top-up" else "issued"] += flt(sle.actual_qty)
+		entry = entries.get(sle.voucher_no) if sle.voucher_type == "Stock Entry" else None
+		trip = entry.mobile_trip if entry else sale_trip.get(sle.voucher_no)
+		if not trip or vans.get(trip) != sle.warehouse:
+			continue
+		row = out[trip][sle.item_code]
+		if entry:
+			row["topped_up" if entry.mobile_purpose == "Top-up" else "issued"] += flt(sle.actual_qty)
 			row.issued_value += flt(sle.stock_value_difference)
 		else:
 			row.sold -= flt(sle.actual_qty)
@@ -237,8 +388,8 @@ def trip_summary(trip, docs=None) -> frappe._dict:
 	docs = docs or trip_documents(trip.name)
 	visits = docs.visits
 	visited = {v.customer for v in visits}
-	planned = [r for r in route_customers(trip.route) if planned_on(r, trip.trip_date)]
-	discounts = visit_discounts([v.name for v in visits])
+	planned = [r for r in docs.route_plan if planned_on(r, trip.trip_date)]
+	discounts = docs.discounts
 	sale_payable = {i.name: payable(i) for i in docs.sales}
 	# credit given at the sale: what the visit left open on its own invoice after its own return credit
 	# (a later visit's return credit paying that invoice does not make it less of a credit sale)
@@ -250,23 +401,17 @@ def trip_summary(trip, docs=None) -> frappe._dict:
 		for v in visits
 		if v.outcome == "Sale" and v.sales_invoice
 	)
-	stock = stock_by_purpose(trip.name, trip.van_warehouse)
-	lines = sale_lines([i.name for i in docs.sales])
+	stock = docs.stock
 	s = docs.settlement
 	s_items = s.stock_lines if s else []
 	s_returns = s.return_lines if s else []
 	trip_invoices = set(sale_payable)
 	collected_current = collected_previous = 0.0
-	if docs.payments:
-		for ref in frappe.get_all(
-			"Payment Entry Reference",
-			filters={"parent": ["in", [p.name for p in docs.payments]], "parenttype": "Payment Entry"},
-			fields=["reference_name", "allocated_amount"],
-		):
-			if ref.reference_name in trip_invoices:
-				collected_current += flt(ref.allocated_amount)
-			else:
-				collected_previous += flt(ref.allocated_amount)
+	for ref in docs.references:
+		if ref.reference_name in trip_invoices:
+			collected_current += flt(ref.allocated_amount)
+		else:
+			collected_previous += flt(ref.allocated_amount)
 	return frappe._dict(
 		trip=trip.name,
 		trip_date=trip.trip_date,
@@ -285,7 +430,7 @@ def trip_summary(trip, docs=None) -> frappe._dict:
 		collection_visits=sum(1 for v in visits if v.outcome == "Collection Only"),
 		return_visits=sum(1 for v in visits if v.outcome == "Return Only"),
 		invoices=len(docs.sales),
-		lines=len(lines),
+		lines=docs.line_count,
 		net_sales=flt(sum(flt(i.net_total) for i in docs.sales), 2),
 		taxes=flt(sum(flt(i.total_taxes_and_charges) for i in docs.sales), 2),
 		sales_total=flt(sum(sale_payable.values()), 2),
@@ -362,7 +507,7 @@ def day_report(trip_name) -> frappe._dict:
 		for v in visits
 	]
 	visited = {v.customer for v in visits}
-	missed = [r for r in route_customers(trip.route) if planned_on(r, trip.trip_date) and r.customer not in visited]
+	missed = [r for r in docs.route_plan if planned_on(r, trip.trip_date) and r.customer not in visited]
 	names = {v.name: v.customer_name or v.customer for v in visits}
 	changes = [
 		frappe._dict(customer=names.get(c.parent), field=c.field_label, old=c.old_value, new=c.new_value, status=c.status)
@@ -418,14 +563,9 @@ def day_report(trip_name) -> frappe._dict:
 		row.discount = flt(row.discount, 2)
 	trip_invoices = {i.name for i in docs.sales}
 	collections = []
+	refs_of = by_key(docs.references, "parent")
 	for p in docs.payments:
-		refs = frappe.get_all(
-			"Payment Entry Reference",
-			filters={"parent": p.name, "parenttype": "Payment Entry"},
-			fields=["reference_name", "allocated_amount"],
-			order_by="idx asc",
-		)
-		for ref in refs or [frappe._dict(reference_name=None, allocated_amount=p.paid_amount)]:
+		for ref in refs_of.get(p.name) or [frappe._dict(reference_name=None, allocated_amount=p.paid_amount)]:
 			collections.append(
 				frappe._dict(payment=p.name, customer=p.party_name or p.party, invoice=ref.reference_name,
 					against=_("Today") if ref.reference_name in trip_invoices else _("Previous"),
@@ -433,7 +573,7 @@ def day_report(trip_name) -> frappe._dict:
 			)
 	returns = return_rows({"mobile_trip": trip_name}, docs=docs, trips=[trip])
 	stock = []
-	moved = stock_by_purpose(trip_name, trip.van_warehouse)
+	moved = docs.stock
 	s = docs.settlement
 	for row in s.stock_lines if s else []:
 		m = moved.get(row.item_code) or frappe._dict(issued=row.issued_qty, topped_up=0)
@@ -519,8 +659,7 @@ def return_rows(filters=None, docs=None, trips=None) -> list:
 	trips = trips if trips is not None else trip_rows(filters)
 	settings = ms_settings.get_settings()
 	rows = []
-	for trip in trips:
-		d = docs if docs is not None and len(trips) == 1 else trip_documents(trip.name)
+	for trip, d in [(trips[0], docs)] if docs is not None and len(trips) == 1 else iter_trip_documents(trips, summary=False):
 		visit_map = {v.name: v for v in d.visits}
 		applied = defaultdict(list)
 		for p in d.set_offs:
@@ -528,17 +667,7 @@ def return_rows(filters=None, docs=None, trips=None) -> list:
 		note_out = {n.name: n for n in d.notes}
 		counted = {r.item_code: r for r in (d.settlement.return_lines if d.settlement else [])}
 		first_row = set()
-		for line in (
-			frappe.get_all(
-				"Customer Visit Return Item",
-				filters={"parent": ["in", list(visit_map)], "parenttype": "Customer Visit"},
-				fields=["parent", "item_code", "item_name", "qty", "uom", "stock_qty", "rate", "amount", "against_invoice",
-					"return_reason", "condition", "remarks", "credit_note", "batch_info"],  # fmt: skip
-				order_by="parent asc, idx asc",
-			)
-			if visit_map
-			else []
-		):
+		for line in d.return_lines:
 			visit = visit_map[line.parent]
 			note = note_out.get(line.credit_note)
 			count = counted.get(line.item_code) if (trip.name, line.item_code) not in first_row else None
@@ -596,13 +725,23 @@ def warehouse_moves(filters, warehouse, trips) -> list:
 		conditions["posting_date"] = ["between", [getdate(f.from_date), getdate(f.to_date)]]
 	trip_names = {t.name for t in trips}
 	rows = []
-	for sle in frappe.get_all(
+	moves = frappe.get_all(
 		"Stock Ledger Entry",
 		filters=conditions,
 		fields=["posting_date", "voucher_type", "voucher_no", "item_code", "actual_qty", "stock_uom"],
 		order_by="posting_date asc, posting_time asc, creation asc",
-	):
-		trip = frappe.db.get_value(sle.voucher_type, sle.voucher_no, "mobile_trip") if sle.voucher_type == "Stock Entry" else None
+	)
+	entries = {
+		e.name: e
+		for e in frappe.get_all(
+			"Stock Entry",
+			filters={"name": ["in", [m.voucher_no for m in moves if m.voucher_type == "Stock Entry"] or [""]]},
+			fields=["name", "mobile_trip", "mobile_purpose"],
+		)
+	}
+	for sle in moves:
+		entry = entries.get(sle.voucher_no) if sle.voucher_type == "Stock Entry" else None
+		trip = entry.mobile_trip if entry else None
 		if f.agent or f.vehicle or f.route or f.territory:
 			if trip not in trip_names:
 				continue
@@ -616,7 +755,7 @@ def warehouse_moves(filters, warehouse, trips) -> list:
 				qty=flt(sle.actual_qty),
 				uom=sle.stock_uom,
 				voucher=sle.voucher_no,
-				remarks=frappe.db.get_value(sle.voucher_type, sle.voucher_no, "mobile_purpose") if sle.voucher_type == "Stock Entry" else None,
+				remarks=entry.mobile_purpose if entry else None,
 			)
 		)
 	return rows
@@ -625,9 +764,8 @@ def warehouse_moves(filters, warehouse, trips) -> list:
 def visit_rows(filters=None) -> list:
 	"""Customer Visit Register."""
 	rows = []
-	for trip in trip_rows(filters):
-		docs = trip_documents(trip.name)
-		discounts = visit_discounts([v.name for v in docs.visits])
+	for trip, docs in iter_trip_documents(trip_rows(filters), summary=False):
+		discounts = docs.discounts
 		for v in docs.visits:
 			d = discounts.get(v.name) or frappe._dict(line_manual=0)
 			rows.append(
@@ -663,11 +801,13 @@ def discount_rows(filters=None) -> list:
 	invoice) and the manual share of the price-list value against the agent's cap."""
 	rows = []
 	caps = {}
-	for trip in trip_rows(filters):
-		docs = trip_documents(trip.name)
+	for trip, docs in iter_trip_documents(trip_rows(filters), summary=False):
 		sale_visits = [v for v in docs.visits if v.sales_invoice]
-		discounts = visit_discounts([v.name for v in sale_visits])
-		cap = caps.setdefault(trip.agent, flt(frappe.db.get_value("Mobile Sales Agent", trip.agent, "max_discount_pct")))
+		discounts = docs.discounts
+		net_totals = {i.name: i.net_total for i in docs.sales}
+		if trip.agent not in caps:
+			caps[trip.agent] = flt(frappe.db.get_value("Mobile Sales Agent", trip.agent, "max_discount_pct"))
+		cap = caps[trip.agent]
 		for v in sale_visits:
 			d = discounts[v.name]
 			manual = flt(d.line_manual + flt(v.discount_amount), 2)
@@ -690,7 +830,7 @@ def discount_rows(filters=None) -> list:
 					manual_pct=share,
 					cap_pct=cap,
 					within_cap=_("Yes") if share <= cap + 0.0005 else _("No"),
-					net_total=flt(frappe.db.get_value("Sales Invoice", v.sales_invoice, "net_total")),
+					net_total=flt(net_totals.get(v.sales_invoice)),
 				)
 			)
 	return rows
@@ -699,8 +839,7 @@ def discount_rows(filters=None) -> list:
 def stock_variance_rows(filters=None) -> list:
 	"""Mobile Stock Variance: agent x item over the period, from the settled trips."""
 	out = {}
-	for trip in trip_rows(filters):
-		docs = trip_documents(trip.name)
+	for trip, docs in iter_trip_documents(trip_rows(filters), summary=False):
 		s = docs.settlement
 		if not (s and s.docstatus == 1):
 			continue
@@ -730,8 +869,12 @@ def stock_variance_rows(filters=None) -> list:
 def cash_variance_rows(filters=None) -> list:
 	"""Mobile Cash Variance: one row per settled trip."""
 	rows = []
-	for trip in trip_rows(filters):
-		s = trip_documents(trip.name).settlement
+	settlements = {}
+	trips = trip_rows(filters)
+	for index in range(0, len(trips), CHUNK):
+		settlements.update(trip_settlements([t.name for t in trips[index : index + CHUNK]]))
+	for trip in trips:
+		s = settlements.get(trip.name)
 		if not (s and s.docstatus == 1):
 			continue
 		rows.append(
@@ -891,8 +1034,8 @@ def no_sale_rows(filters=None, group_by="agent") -> list:
 def performance_rows(filters=None) -> list:
 	"""Salesperson Performance: agent over the period."""
 	out = {}
-	for trip in trip_rows(filters):
-		s = trip_summary(trip)
+	for trip, docs in iter_trip_documents(trip_rows(filters)):
+		s = trip_summary(trip, docs)
 		row = out.setdefault(
 			trip.agent,
 			frappe._dict(agent=trip.agent, agent_name=trip.agent_name, trips=0, days=set(), visits=0, planned_visits=0,
@@ -932,7 +1075,7 @@ def performance_rows(filters=None) -> list:
 
 def trip_summary_rows(filters=None) -> list:
 	"""Daily Trip Summary."""
-	return [trip_summary(trip) for trip in trip_rows(filters)]
+	return [trip_summary(trip, docs) for trip, docs in iter_trip_documents(trip_rows(filters))]
 
 
 # phone, charts, email
@@ -976,8 +1119,8 @@ def _chart(labels, values, name):
 def chart_sales_by_agent(days=30):
 	from_date, to_date = last_days(days)
 	totals = defaultdict(float)
-	for trip in trip_rows({"from_date": from_date, "to_date": to_date}):
-		totals[trip.agent_name or trip.agent] += trip_summary(trip).sales_total
+	for trip, docs in iter_trip_documents(trip_rows({"from_date": from_date, "to_date": to_date})):
+		totals[trip.agent_name or trip.agent] += trip_summary(trip, docs).sales_total
 	return _chart(list(totals), [flt(v, 2) for v in totals.values()], _("Mobile sales"))
 
 

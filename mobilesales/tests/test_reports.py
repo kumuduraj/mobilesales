@@ -273,6 +273,22 @@ class TestReports(SettlementTestBase):
 		(no_sale,) = self.run_as(SUPERVISOR, "No Sale Reason Analysis")
 		self.assertEqual((no_sale["reason"], no_sale["count"], no_sale["visits"], no_sale["pct"]), (self.reason, 1, 4, 25))
 
+	def test_trips_loaded_together_equal_one_by_one(self):
+		"""The reports load up to CHUNK trips with one query per table: each trip gets exactly its own documents,
+		the same as loaded alone, whatever the chunk size."""
+		self.seed()
+		other = self.run_trip([(self.plain_item, 5)], sales=[[(self.plain_item, 2)]], agent=self.agent_b)
+		with as_user(SUPERVISOR):
+			trips = reports.trip_rows({"company": self.company})
+			self.assertLessEqual({self.trip.name, other.name}, {t.name for t in trips})
+			together = reports.trips_documents(trips)
+			for trip in trips:
+				self.assertEqual(together[trip.name], reports.trip_documents(trip.name), trip.name)
+			self.assertEqual(len(together[other.name].visits), 1)
+			rows = reports.trip_summary_rows({"company": self.company})
+			with patch.object(reports, "CHUNK", 1):
+				self.assertEqual(reports.trip_summary_rows({"company": self.company}), rows)
+
 	def test_day_report_pdf_email_and_my_day(self):
 		done = self.seed()
 		# queued on submit, after the commit
