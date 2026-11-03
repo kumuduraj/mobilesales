@@ -89,10 +89,17 @@ def _resolve_row(visit, row, used):
 		return
 
 	invoice = frappe.db.get_value(
-		"Sales Invoice", row.against_invoice, ["customer", "company", "docstatus", "is_return"], as_dict=True
+		"Sales Invoice", row.against_invoice, ["customer", "company", "docstatus", "is_return", "update_stock"], as_dict=True
 	)
 	if not invoice or invoice.docstatus != 1 or invoice.is_return:
 		frappe.throw(_("Return row {0}: {1} is not a submitted Sales Invoice.").format(row.idx, row.against_invoice))
+	if not invoice.update_stock:
+		# ERPNext takes such returns through the Delivery Note, not a stock credit note
+		frappe.throw(
+			_("Return row {0}: Sales Invoice {1} was delivered with a Delivery Note; return these goods at the office.").format(
+				row.idx, frappe.bold(row.against_invoice)
+			)
+		)
 	if invoice.customer != visit.customer or invoice.company != visit.company:
 		frappe.throw(
 			_("Return row {0}: Sales Invoice {1} does not belong to customer {2}.").format(

@@ -311,6 +311,7 @@ def return_invoice_query(doctype, txt, searchfield, start, page_len, filters):
 		"company": filters.company,
 		"docstatus": 1,
 		"is_return": 0,
+		"update_stock": 1,  # invoices delivered with a Delivery Note are returned at the office
 		"name": ["like", f"%{txt}%"],
 	}
 	if filters.item_code:
@@ -364,7 +365,7 @@ def get_customer_invoices(customer: str) -> list[dict]:
 	require_roles()
 	invoices = frappe.get_all(
 		"Sales Invoice",
-		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0},
+		filters={"customer": customer, "company": ms_settings.get_settings().company, "docstatus": 1, "is_return": 0, "update_stock": 1},
 		fields=["name", "posting_date", "grand_total", "rounded_total", "outstanding_amount"],
 		order_by="posting_date desc, posting_time desc, creation desc",
 		limit_page_length=SEARCH_LIMIT,
@@ -662,7 +663,7 @@ def _submit_visit(data) -> dict:
 
 	existing = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 	if existing:
-		return {**_visit_summary(own_visit(existing)), "duplicate": True}
+		return _duplicate(existing)
 
 	trip = own_trip(data.mobile_trip)
 	if data.outcome not in OUTCOMES:
@@ -712,8 +713,21 @@ def _submit_visit(data) -> dict:
 		existing = frappe.db.get_value("Customer Visit", {"client_ref": client_ref}, "name")
 		if not existing:
 			raise
-		return {**_visit_summary(own_visit(existing)), "duplicate": True}
+		return _duplicate(existing)
 	return {**_visit_summary(visit), "duplicate": False}
+
+
+def _duplicate(name) -> dict:
+	"""The same client_ref again (double tap, retry after a timeout): the visit already recorded. One that was
+	cancelled since (or a draft made in Desk) is not passed off as recorded."""
+	visit = own_visit(name)
+	if visit.docstatus != 1:
+		frappe.throw(
+			_("Visit {0} with this reference is {1}; start a new visit.").format(
+				visit.name, _("cancelled") if visit.docstatus == 2 else _("a draft")
+			)
+		)
+	return {**_visit_summary(visit), "duplicate": True}
 
 
 @frappe.whitelist()
@@ -905,10 +919,12 @@ def submit_settlement_for_verification(settlement_name: str) -> dict:
 		frappe.throw(_("Mobile Settlement {0} not found.").format(settlement_name))
 	doc = frappe.get_doc("Mobile Settlement", settlement_name)
 	own_trip(doc.mobile_trip)
+	doc = frappe.get_doc("Mobile Settlement", settlement_name, for_update=True)
 	if (doc.workflow_state or "Draft") != "Draft":
-		frappe.throw(_("Settlement {0} is already {1}.").format(doc.name, _(doc.workflow_state)))
+		# a retry after a timeout (or a double tap): already submitted, show where it is
+		return {**_settlement_payload(doc), "duplicate": True}
 	apply_workflow(doc, "Submit for Verification")
-	return _settlement_payload(frappe.get_doc("Mobile Settlement", settlement_name))
+	return {**_settlement_payload(frappe.get_doc("Mobile Settlement", settlement_name)), "duplicate": False}
 
 
 # Printing

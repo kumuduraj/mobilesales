@@ -40,7 +40,7 @@ class TestSecurity(SettlementTestBase):
 
 	def office_invoice(self, customer=None):
 		si = frappe.get_doc(
-			{"doctype": "Sales Invoice", "company": self.company, "customer": customer or self.customer,
+			{"doctype": "Sales Invoice", "company": self.company, "customer": customer or self.customer, "update_stock": 1,
 			 "items": [{"item_code": self.plain_item, "qty": 1, "rate": 90, "warehouse": self.store}]}
 		).insert()  # fmt: skip
 		si.submit()

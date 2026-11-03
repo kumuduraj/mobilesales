@@ -342,8 +342,8 @@ class TestMobileAPI(MobileSalesTestCase):
 			self.assertEqual((submitted["workflow_state"], submitted["editable"]), ("Pending Store", False))
 			with self.assertRaisesRegex(frappe.ValidationError, "can no longer be changed"):
 				api.save_settlement(trip.name, {"stock_lines": [{"item_code": self.plain_item, "returned_qty": 1}]})
-			with self.assertRaisesRegex(frappe.ValidationError, "already Pending Store"):
-				api.submit_settlement_for_verification(saved["name"])
+			again = api.submit_settlement_for_verification(saved["name"])  # double tap / retry after a timeout
+			self.assertEqual((again["workflow_state"], again["duplicate"], submitted["duplicate"]), ("Pending Store", True, False))
 
 	# printing
 

@@ -28,8 +28,9 @@ EDIT_RULES = {
 
 @frappe.whitelist()
 def make_settlement(trip: str) -> str:
-	"""'Create Settlement' on the trip: returns the open settlement or creates one."""
-	doc = frappe.get_doc("Mobile Trip", trip)
+	"""'Create Settlement' on the trip: returns the open settlement or creates one. The trip row is locked
+	first, so a double tap (or the app and Desk at once) cannot create two."""
+	doc = frappe.get_doc("Mobile Trip", trip, for_update=True)
 	agent_user = frappe.db.get_value("Mobile Sales Agent", doc.agent, "user")
 	if frappe.session.user != agent_user and not set(CREATE_ROLES) & set(frappe.get_roles()):
 		frappe.throw(_("Only the trip's agent, a store keeper or a supervisor can start the settlement."), frappe.PermissionError)

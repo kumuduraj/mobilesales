@@ -195,6 +195,8 @@ def update_trip_summary(trip_name):
 def start_trip(trip: str) -> str:
 	doc = _lock(trip)
 	_require_agent_or_roles(doc, SUPERVISOR_ROLES)
+	if doc.status == "In Field":
+		return doc.status  # a retry after a timeout: already done
 	_require_status(doc, ("Loaded",))
 	doc.db_set("status", "In Field")
 	return doc.status
@@ -204,6 +206,8 @@ def start_trip(trip: str) -> str:
 def end_day(trip: str) -> str:
 	doc = _lock(trip)
 	_require_agent_or_roles(doc, SUPERVISOR_ROLES)
+	if doc.status == "Settling":
+		return doc.status  # a retry after a timeout: already done
 	_require_status(doc, ("In Field",))
 	drafts = frappe.get_all("Customer Visit", filters={"mobile_trip": doc.name, "docstatus": 0}, pluck="name")
 	if drafts:
