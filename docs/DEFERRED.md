@@ -90,7 +90,10 @@ Bluetooth printing on the van's 4-inch printer through the Evonet Android print 
   - Salesperson Performance and Daily Trip Summary build every trip's full summary (4.6–4.7 s median for 600 trips,
     worst 6.7 s cold);
   - ERPNext's own FIFO batch pick sums every batch entry of the item in the warehouse (core, not changed).
-- **To do:** a covering index on GL Entry (`account, is_cancelled, debit, credit`, needs approval as an index on an
-  ERPNext table) or a check bounded by the last settled zero balance; store the trip summary figures on the trip at
-  settlement and let the two reports read those; ask the server owner to size `innodb_buffer_pool_size` for all
-  benches on the server.
+- **Decided for v1.1 (Raj, 2026-11-04):**
+  - The settlement cash check becomes bounded: the agent cash account's balance is summed from the last settlement
+    that left it at zero, not over the whole history. Our code only; no new index on an ERPNext table.
+  - Each trip's summary figures are stored on the trip at settlement (and cleared on cancel); Salesperson Performance
+    and Daily Trip Summary read those rows instead of rebuilding every trip's summary.
+  - `innodb_buffer_pool_size`: the server owner raises it (2 GB recommended, ADMIN_GUIDE.md §9). Not app work.
+  - The ERPNext FIFO batch sum stays (core).

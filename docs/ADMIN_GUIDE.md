@@ -225,6 +225,12 @@ hooks, scheduler), or an update that adds Python files used by document events.
 Back up before every update: `bench --site <site> backup --with-files`. All automated tests run on
 `mstest.local` (same bench, its own company); never run `run-tests` on the live site.
 
+Database cache: MariaDB on this server runs with the default `innodb_buffer_pool_size` of 128 MB, shared by every
+site of every bench. Recommended: **2 GB** (the server has 16 GB). It's a server-wide setting for the server
+administrator: set `innodb_buffer_pool_size = 2G` under `[mysqld]` in the MariaDB config so it survives a restart
+(MariaDB 10.11 can also change it at run time with `SET GLOBAL innodb_buffer_pool_size = 2147483648`). Without it,
+the first run of a large report reads its rows from disk (PERFORMANCE.md §4.2).
+
 ## 10. Upgrade safety (ERPNext / Frappe updates)
 
 - The app gives its roles access to 14 standard DocTypes (Customer, Item, UOM, Price List, Item Price, Batch,

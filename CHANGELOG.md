@@ -1,3 +1,11 @@
+## v1.1.0 — planned
+
+- Settlement cash post-condition bounded to the agent cash account's entries since the last zero balance (it sums the
+  whole history today: 0.4–1.2 s cold at 60 days, an estimated 3–7 s cold after a year; DEFERRED.md §10).
+- Trip summary figures stored on the trip at settlement; Salesperson Performance and Daily Trip Summary read them
+  (4.6–4.7 s median, 6.7 s worst cold over 600 trips today).
+- Server (not app): `innodb_buffer_pool_size` 2 GB (ADMIN_GUIDE.md §9).
+
 ## v1.0.0 — Phase 7: hardening
 
 Security (docs/SECURITY_REVIEW.md, 11 findings fixed):
