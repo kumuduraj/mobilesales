@@ -1,3 +1,14 @@
+## v1.0.1 — planned (live run 2026-11-04)
+
+Phone UI:
+- Line discount row: the mode dropdown starts empty and the box has no label. Default the mode to %, label them
+  ("Disc. type: % / Amount", placeholder "Discount"); the SPA mount test checks both.
+- Bill / Return Note: show a rounding line when the return lines (e.g. 662.50) differ from the rounded return total
+  (662.00).
+- Return invoice picker: show invoices with nothing left to return ("all returned") disabled.
+- Day Report sign-off: when the cashier's Verify Cash goes straight to Approved, the step reads "Approved"; label it
+  "Cashier (cash verified)" with the cashier's name.
+
 ## v1.1.0 — planned
 
 - Settlement cash post-condition bounded to the agent cash account's entries since the last zero balance (it sums the
