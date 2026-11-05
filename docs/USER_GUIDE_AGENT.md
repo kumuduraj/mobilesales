@@ -8,8 +8,19 @@ Your phone app, step by step. You need a phone with a browser, internet and your
 2. Add it to your home screen: Chrome menu ⋮ → **Add to Home screen**. After that it opens like an app.
 3. When the phone asks for **location**, allow it: each visit records where you were.
 
-The app needs internet. Without it you see *"No connection — you can look around, but nothing can be saved
-until you are back online"*. Wait for signal, then try again; nothing is lost and nothing is saved twice.
+The app needs internet. The top right corner always shows the connection:
+
+- green **Online**: the server answered in the last 30 seconds;
+- amber **Reconnecting…**: a check is running after a failed call;
+- red **Offline**: no connection to the server (also on a Wi-Fi that asks you to log in first, or with no data).
+  You see *"No connection — you can look around, but nothing can be saved until you are back online"*. Wait for
+  signal; nothing is lost and nothing is saved twice. When it comes back you see **Back online** and the screen
+  refreshes.
+
+**Your account / log out:** tap your name under *Mobile Sales*. The menu shows your name, email, agent code, the
+vehicle of your open trip and the app version, and **Log out**. If a visit or the settlement has input not saved
+yet, the dialog says so. Log out needs a connection. Always log out before someone else uses the phone; after log
+out nothing of yours is left on it.
 
 The bottom bar has five screens: **Today**, **Route**, **Visit**, **History**, **Settlement**.
 
@@ -114,4 +125,6 @@ Today's visits with their outcome and amounts. Open one to print its bill, invoi
 | *… has no price in price list …* | Don't sell that item; call the office to add the price |
 | *… delivered with a Delivery Note; return these goods at the office* | That invoice can't be returned from the van; the office takes it |
 | *Too many requests. Wait a minute and try again.* | Wait a minute; if it keeps happening, tell the supervisor |
+| *Your session has ended — please log in again* | The app opens the login page by itself; sign in again (a visit not submitted must be entered again) |
+| *Could not log out: the server cannot be reached* | Wait for **Online**, then log out again |
 | The screen stays white / *App failed to load* | Close the app and open it again; if it keeps happening, tell the supervisor |

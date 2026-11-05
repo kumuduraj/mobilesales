@@ -12,6 +12,7 @@ from frappe.website.serve import get_response
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
 
+import mobilesales
 from mobilesales.api import mobile as api
 from mobilesales.services import trip as trip_service
 from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, as_user, leaf
@@ -143,7 +144,7 @@ class TestMobileAPI(MobileSalesTestCase):
 		self.assertEqual(boot["translations"], {})  # English: no Desk message set in the page
 		self.assertEqual(
 			set(boot["context"]),
-			{"user", "full_name", "agent", "trip", "last_trip", "settings", "no_sale_reasons", "return_reasons", "denominations"},
+			{"user", "full_name", "app_version", "agent", "trip", "last_trip", "settings", "no_sale_reasons", "return_reasons", "denominations"},
 		)
 		self.assertIn("window.ms_fail", html)  # on-screen "App failed to load" instead of a blank page
 		self.assertEqual((boot["context"]["trip"]["name"], boot["context"]["trip"]["trip_date"]), (trip.name, str(trip.trip_date)))
@@ -196,6 +197,7 @@ class TestMobileAPI(MobileSalesTestCase):
 			ctx = api.get_context()
 			self.assertEqual((ctx["agent"].name, ctx["trip"].name, ctx["trip"].status), (self.agent_a.name, trip.name, "In Field"))
 			self.assertNotIn("cash_account", ctx["agent"])
+			self.assertEqual((ctx["user"], ctx["app_version"]), (self.agent_a.user, mobilesales.__version__))  # account menu
 			self.assertIn(self.reason, [r.name for r in ctx["no_sale_reasons"]])
 			(row,) = api.get_route_plan(trip.name)
 			self.assertEqual((row.customer, row.visited, row.outstanding), (self.customer, False, 250))

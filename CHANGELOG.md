@@ -1,13 +1,30 @@
-## v1.0.1 — planned (live run 2026-11-04)
+## v1.0.1 — phone app polish
 
-Phone UI:
-- Line discount row: the mode dropdown starts empty and the box has no label. Default the mode to %, label them
-  ("Disc. type: % / Amount", placeholder "Discount"); the SPA mount test checks both.
-- Bill / Return Note: show a rounding line when the return lines (e.g. 662.50) differ from the rounded return total
-  (662.00).
-- Return invoice picker: show invoices with nothing left to return ("all returned") disabled.
-- Day Report sign-off: when the cashier's Verify Cash goes straight to Approved, the step reads "Approved"; label it
-  "Cashier (cash verified)" with the cashier's name.
+Account and log out:
+- Tap the agent name in the header: full name, email, agent code, the open trip's vehicle, app version, **Log out**.
+- Log out asks first ("Log out? Unsaved visit data on this screen will be lost.") and says when a visit or the
+  settlement has input not saved yet. It ends the login on the server (refused, with a message, when there is no
+  connection), clears the app's memory and opens `/login?redirect-to=/mobile-sales`.
+- The service worker caches the app shell only, never an API answer; log out also drops the cached host page (it
+  carries the user's boot data), so the next user of the phone sees nothing of the previous one, online or offline.
+  Service worker cache v4: installed apps update.
+- A login that has ended (expired, logged out elsewhere) shows "Your session has ended — please log in again" and
+  opens the login page. The app asks the server first, so a real permission refusal is still shown as it is.
+
+Connection status:
+- Header dot, always visible: green Online (only after `/api/method/ping` answered, never on the phone's own
+  online flag: captive Wi-Fi, no data), amber Reconnecting… (checking again after a failed call), red Offline.
+  Checks every 30 s, on network changes and after any failed request. Back online: a "Back online" toast and the
+  screen's data reload (a visit keeps its input and is priced again; a settlement with unsaved counts keeps them).
+
+From the live run (2026-11-04):
+- Line discount: the type starts at %, labelled "Disc. type: % / Amount", the box "Discount".
+- Bill and Return Note: a Rounding line when the return lines (662.50) differ from the rounded credit (662.00).
+- Return invoice picker: invoices with nothing left to return are shown but cannot be chosen.
+- Day Report sign-off: Verify Cash that approves at once reads "Cashier (cash verified)" with the cashier's name.
+
+Repository: a `frontend/node_modules` symlink committed in v1.0.0 is removed; `.gitignore` now ignores
+`node_modules` in any form.
 
 ## v1.1.0 — planned
 

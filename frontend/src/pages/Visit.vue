@@ -111,12 +111,26 @@
 							<button class="btn-secondary h-11 w-11 min-h-0 px-0" @click="bump(it, 1)">+</button>
 						</div>
 					</div>
-					<div v-if="maxDiscount > 0 && cart[it.item_code] > 0" class="mt-1 flex items-center gap-2 text-sm">
-						<select v-model="discountMode[it.item_code]" class="field w-24" @change="schedulePrice">
-							<option value="pct">{{ __("Disc. %") }}</option>
-							<option value="amt">{{ __("Disc. amt") }}</option>
-						</select>
-						<input v-model.number="discounts[it.item_code]" class="field w-24" type="number" inputmode="decimal" min="0" @input="schedulePrice" />
+					<div v-if="maxDiscount > 0 && cart[it.item_code] > 0" class="line-discount mt-1 flex items-end gap-2 text-sm">
+						<label class="flex flex-col text-xs text-gray-600">
+							{{ __("Disc. type: % / Amount") }}
+							<select v-model="discountMode[it.item_code]" class="field w-28" @change="schedulePrice">
+								<option value="pct">%</option>
+								<option value="amt">{{ __("Amount") }}</option>
+							</select>
+						</label>
+						<label class="flex flex-col text-xs text-gray-600">
+							{{ __("Discount") }}
+							<input
+								v-model.number="discounts[it.item_code]"
+								class="field w-28"
+								type="number"
+								inputmode="decimal"
+								min="0"
+								:placeholder="__('Discount')"
+								@input="schedulePrice"
+							/>
+						</label>
 					</div>
 					<div v-if="lineFor(it.item_code)" class="mt-1 text-sm text-gray-600">
 						{{ qty(lineFor(it.item_code).qty) }} × {{ money(lineFor(it.item_code).rate) }} = {{ money(lineFor(it.item_code).amount) }}
@@ -162,7 +176,9 @@
 				<select v-model="newReturn.against_invoice" class="field" @change="loadReturnLines">
 					<option value="" disabled>{{ __("Choose invoice…") }}</option>
 					<option :value="NO_INVOICE">{{ __("No invoice (item without batches)") }}</option>
-					<option v-for="inv in customerInvoices" :key="inv.name" :value="inv.name">{{ invoiceLabel(inv) }}</option>
+					<option v-for="inv in customerInvoices" :key="inv.name" :value="inv.name" :disabled="!(inv.returnable || []).length">
+						{{ invoiceLabel(inv) }}
+					</option>
 				</select>
 				<select v-if="newReturn.against_invoice && newReturn.against_invoice !== NO_INVOICE" v-model="newReturn.sales_invoice_item" class="field">
 					<option value="">{{ __("Item…") }}</option>
@@ -331,11 +347,12 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import { call, m } from "../api"
+import { onReconnect } from "../connection"
 import { loadContext } from "../context"
 import VisitPrints from "../components/VisitPrints.vue"
-import { money, newClientRef, online, qty, session } from "../state"
+import { money, newClientRef, online, qty, session, unsaved } from "../state"
 import { __ } from "../translation"
 
 const props = defineProps({ customer: { type: String, required: true } })
@@ -377,6 +394,12 @@ const shelf = ref([])
 const cart = reactive({})
 const discounts = reactive({})
 const discountMode = reactive({})
+// every cart line starts with a % discount (the select is never blank)
+watch(
+	() => Object.keys(cart).filter((code) => Number(cart[code]) > 0),
+	(codes) => codes.forEach((code) => (discountMode[code] ||= "pct")),
+	{ immediate: true }
+)
 const invoiceDiscount = reactive({ mode: "pct", value: null })
 const previous = reactive({})
 const selected = reactive({})
@@ -496,6 +519,24 @@ const returnMissing = computed(() => {
 const canAddReturn = computed(() => !returnMissing.value)
 const conditionClass = (condition) => (condition === "Damaged" ? "bg-red-100 text-red-800" : "bg-green-100 text-green-800")
 const shelfRows = computed(() => shelf.value.filter((r) => r.item_code))
+// Typed in but not submitted yet (the logout dialog says so); location capture alone is not input.
+const hasInput = computed(
+	() =>
+		!done.value &&
+		(!!form.outcome ||
+			Object.values(cart).some((q) => Number(q) > 0) ||
+			returnRows.value.length > 0 ||
+			pendingReturn.value ||
+			shelfRows.value.length > 0 ||
+			!!photo.value ||
+			!!form.remarks ||
+			form.update_customer)
+)
+watch(hasInput, (value) => (unsaved.visit = value), { immediate: true })
+onBeforeUnmount(() => (unsaved.visit = false))
+// back online: the cart's prices again (input stays as typed)
+onReconnect(() => (step.value !== "done" ? price() : null))
+
 const totalCollected = computed(
 	() => (form.outcome === "Sale" ? Number(form.collect_amount || 0) : 0) + previousRows.value.reduce((s, r) => s + r.allocated, 0)
 )

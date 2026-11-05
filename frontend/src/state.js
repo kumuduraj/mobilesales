@@ -1,12 +1,31 @@
 import { reactive, ref } from "vue"
 import { __ } from "./translation"
 
+// "online" only after /api/method/ping answered (never on navigator.onLine alone: captive Wi-Fi, no data);
+// "reconnecting" while a check runs after a failure; "offline" when the phone is offline or the server
+// stays unreachable. connection.js keeps it current.
+export const connection = ref(navigator.onLine ? "reconnecting" : "offline")
+// Saving and the submit buttons are blocked only when offline (a check in progress lets calls through).
 export const online = ref(navigator.onLine)
-window.addEventListener("online", () => (online.value = true))
-window.addEventListener("offline", () => (online.value = false))
+export const toast = ref("")
 
 // Session context from get_context(): agent, open trip, settings flags, reasons, denominations.
-export const session = reactive({ ctx: null, loading: false, error: null })
+// expired: the server no longer knows this login (the app shows a message and goes to the login page).
+export const session = reactive({ ctx: null, loading: false, error: null, expired: false })
+
+// Screens holding input not yet sent to the server (the logout dialog warns about them).
+export const unsaved = reactive({ visit: false, settlement: false })
+
+export const LOGIN_URL = "/login?redirect-to=/mobile-sales"
+
+// Log out / user switch: nothing of the previous user stays in memory.
+export function resetState() {
+	Object.assign(session, { ctx: null, loading: false, error: null, expired: false })
+	Object.assign(unsaved, { visit: false, settlement: false })
+	toast.value = ""
+	window.ms_boot = null
+	window.csrf_token = null
+}
 
 export function money(value) {
 	const currency = session.ctx?.settings?.currency || ""

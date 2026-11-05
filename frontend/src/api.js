@@ -1,8 +1,12 @@
 // Thin wrapper around Frappe's /api/method endpoint: CSRF header, plain-language errors, offline guard.
+import { endSession, sessionEnded } from "./account"
+import { reportFailure } from "./connection"
 import { online } from "./state"
 import { __ } from "./translation"
 
 export class ApiError extends Error {}
+
+export const SESSION_ENDED = () => __("Your session has ended — please log in again")
 
 function serverMessage(data) {
 	try {
@@ -36,11 +40,21 @@ export async function call(method, args = {}) {
 			headers: { Accept: "application/json", "X-Frappe-CSRF-Token": window.csrf_token },
 		})
 	} catch (e) {
+		reportFailure()
+		throw new ApiError(__("Could not reach the server. Check your connection."))
+	}
+	if ([502, 503, 504].includes(response.status)) {
+		reportFailure() // the proxy answered, the site did not
 		throw new ApiError(__("Could not reach the server. Check your connection."))
 	}
 	const data = await response.json().catch(() => ({}))
-	if (response.status === 403 && !serverMessage(data)) {
-		throw new ApiError(__("Your session has expired. Please log in again."))
+	// A refusal can be a real permission answer ("You can only see your own trips") or a login that has
+	// ended (expired, logged out elsewhere): ask the server which before saying so.
+	if ([401, 403].includes(response.status) || data.exc_type === "CSRFTokenError") {
+		if (await sessionEnded()) {
+			endSession()
+			throw new ApiError(SESSION_ENDED())
+		}
 	}
 	if (!response.ok || data.exc_type) {
 		throw new ApiError(plain(serverMessage(data) || __("Something went wrong ({0}).", [response.status])))
