@@ -124,12 +124,17 @@ def mobile_return_note_print(doc) -> dict:
 		)
 	applied = [p for p in set_offs(doc.name) if p.credit_note == doc.name]
 	visit = frappe.db.get_value("Customer Visit Return Item", {"credit_note": doc.name, "docstatus": 1}, "parent")
+	credit = abs(invoicing.payable_amount(doc))
+	lines_total = flt(sum(line.amount for line in lines), 2)
 	return frappe._dict(
 		agent_name=agent_name(doc.get("mobile_trip")),
 		visit=visit,
 		against=list(dict.fromkeys([doc.return_against] if doc.return_against else [])),
 		lines=lines,
-		credit=abs(invoicing.payable_amount(doc)),
+		credit=credit,
+		lines_total=lines_total,
+		# the credit is the note's rounded total: 0.5 Kg x 1,325.00 = 662.50 on the lines, 662.00 credited
+		rounding=flt(credit - lines_total, 2),
 		applied=applied,
 		credit_left=flt(-flt(doc.outstanding_amount), 2) if flt(doc.outstanding_amount) < 0 else 0,
 	)
@@ -145,7 +150,15 @@ def mobile_visit_bill_print(visit) -> dict:
 	returns = []
 	for note in notes:
 		figures = mobile_return_note_print(note)
-		returns.append(frappe._dict(name=note.name, return_against=note.return_against, lines=figures.lines, total=figures.credit))
+		returns.append(
+			frappe._dict(
+				name=note.name,
+				return_against=note.return_against,
+				lines=figures.lines,
+				total=figures.credit,
+				rounding=figures.rounding,
+			)
+		)
 	return_total = flt(sum(r.total for r in returns), 2)
 	applied = defaultdict(float)
 	for p in set_off:

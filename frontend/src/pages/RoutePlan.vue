@@ -43,6 +43,7 @@
 import { computed, onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 import { call, m } from "../api"
+import { onReconnect } from "../connection"
 import NewCustomer from "../components/NewCustomer.vue"
 import { money, session } from "../state"
 
@@ -77,12 +78,15 @@ function onCreated(customer) {
 	else results.value = [{ name: customer.name, customer_name: customer.customer_name }]
 }
 
-onMounted(async () => {
+async function loadPlan() {
 	if (!trip.value) return
 	try {
 		plan.value = await call(m("get_route_plan"), { trip: trip.value.name })
 	} catch (e) {
 		message.value = e.message
 	}
-})
+}
+
+onMounted(loadPlan)
+onReconnect(loadPlan)
 </script>

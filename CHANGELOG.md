@@ -1,3 +1,39 @@
+## v1.0.1 — phone app polish
+
+Account and log out:
+- Tap the agent name in the header: full name, email, agent code, the open trip's vehicle, app version, **Log out**.
+- Log out asks first ("Log out? Unsaved visit data on this screen will be lost.") and says when a visit or the
+  settlement has input not saved yet. It ends the login on the server (refused, with a message, when there is no
+  connection), clears the app's memory and opens `/login?redirect-to=/mobile-sales`.
+- The service worker caches the app shell only, never an API answer; log out also drops the cached host page (it
+  carries the user's boot data), so the next user of the phone sees nothing of the previous one, online or offline.
+  Service worker cache v4: installed apps update.
+- A login that has ended (expired, logged out elsewhere) shows "Your session has ended — please log in again" and
+  opens the login page. The app asks the server first, so a real permission refusal is still shown as it is.
+
+Connection status:
+- Header dot, always visible: green Online (only after `/api/method/ping` answered, never on the phone's own
+  online flag: captive Wi-Fi, no data), amber Reconnecting… (checking again after a failed call), red Offline.
+  Checks every 30 s, on network changes and after any failed request. Back online: a "Back online" toast and the
+  screen's data reload (a visit keeps its input and is priced again; a settlement with unsaved counts keeps them).
+
+From the live run (2026-11-04):
+- Line discount: the type starts at %, labelled "Disc. type: % / Amount", the box "Discount".
+- Bill and Return Note: a Rounding line when the return lines (662.50) differ from the rounded credit (662.00).
+- Return invoice picker: invoices with nothing left to return are shown but cannot be chosen.
+- Day Report sign-off: Verify Cash that approves at once reads "Cashier (cash verified)" with the cashier's name.
+
+Repository: a `frontend/node_modules` symlink committed in v1.0.0 is removed; `.gitignore` now ignores
+`node_modules` in any form.
+
+## v1.1.0 — planned
+
+- Settlement cash post-condition bounded to the agent cash account's entries since the last zero balance (it sums the
+  whole history today: 0.4–1.2 s cold at 60 days, an estimated 3–7 s cold after a year; DEFERRED.md §10).
+- Trip summary figures stored on the trip at settlement; Salesperson Performance and Daily Trip Summary read them
+  (4.6–4.7 s median, 6.7 s worst cold over 600 trips today).
+- Server (not app): `innodb_buffer_pool_size` 2 GB (ADMIN_GUIDE.md §9).
+
 ## v1.0.0 — Phase 7: hardening
 
 Security (docs/SECURITY_REVIEW.md, 11 findings fixed):

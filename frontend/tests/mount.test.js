@@ -2,8 +2,10 @@
 // route rendered once per scenario. Any app/router error, unhandled rejection or Vue warning fails the build.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMemoryHistory } from "vue-router"
+import { nav, timing as accountTiming } from "../src/account"
 import { createMobileApp, routes } from "../src/app"
-import { session, visitPrints } from "../src/state"
+import { timing as connectionTiming } from "../src/connection"
+import { connection, LOGIN_URL, online, session, unsaved, visitPrints } from "../src/state"
 
 const AGENT = {
 	name: "MSA-0001",
@@ -40,6 +42,7 @@ const boot = (agent, openTrip) => ({
 	context: {
 		user: agent ? "van1@evonet.lk" : "pilot.supervisor@evonet.lk",
 		full_name: agent ? "Van Agent 1" : "Pilot Supervisor",
+		app_version: "1.0.1",
 		agent,
 		trip: openTrip,
 		settings: {
@@ -238,12 +241,21 @@ const SCENARIOS = [
 const PATHS = routes.filter((r) => !r.path.includes("pathMatch")).map((r) => r.path.replace(":customer", "Pilot%20Customer%201"))
 
 let problems
+// server(url, init) → a response, or undefined for the default answers below (tests set it per case)
+let server = null
+const answer = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 beforeEach(() => {
 	problems = []
-	globalThis.fetch = vi.fn(async (url) => {
+	server = null
+	globalThis.fetch = vi.fn(async (url, init) => {
+		const special = server?.(String(url), init)
+		if (special) return special
+		if (String(url).endsWith("/api/method/ping")) return answer(200, { message: "pong" })
+		if (String(url).endsWith("/api/method/logout")) return answer(200, {})
+		if (String(url).endsWith("frappe.auth.get_logged_user")) return answer(200, { message: window.ms_boot?.context?.user })
 		const method = String(url).split(".").pop()
 		if (!(method in API)) problems.push(`unexpected API call ${url}`)
-		return { ok: true, status: 200, json: async () => ({ message: structuredClone(API[method] ?? null) }) }
+		return answer(200, { message: structuredClone(API[method] ?? null) })
 	})
 	vi.spyOn(console, "warn").mockImplementation((...a) => problems.push(`console.warn: ${a.join(" ")}`))
 	vi.spyOn(console, "error").mockImplementation((...a) => problems.push(`console.error: ${a.join(" ")}`))
@@ -420,16 +432,26 @@ describe("visit wizard (Phase 5b)", () => {
 		expect(text).toContain("Return Only")
 	})
 
-	it("Sale shows line and invoice discount inputs", async () => {
+	it("Sale shows line and invoice discount inputs; the line row is labelled and starts at %", async () => {
+		const row = {}
 		const text = await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
 			await toOutcome(root)
 			click(root, "Sale")
 			await settle()
 			click(root, "+")
 			await settle()
+			const line = root.querySelector(".line-discount")
+			row.labels = line.textContent.replace(/\s+/g, " ")
+			row.mode = line.querySelector("select").value
+			row.options = [...line.querySelector("select").options].map((o) => o.textContent.trim())
+			row.placeholder = line.querySelector("input").getAttribute("placeholder")
 		})
 		expect(problems).toEqual([])
-		expect(text).toContain("Disc. %")
+		expect(row.labels).toContain("Disc. type: % / Amount")
+		expect(row.labels).toContain("Discount")
+		expect(row.mode).toBe("pct") // never blank (live run 2026-11-04)
+		expect(row.options).toEqual(["%", "Amount"])
+		expect(row.placeholder).toBe("Discount")
 		expect(text).toContain("Invoice discount")
 	})
 
@@ -792,6 +814,7 @@ describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () 
 			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
 				const form = await toReturns(root)
 				seen.options = [...form.querySelectorAll("select")[0].options].map((o) => o.textContent.trim())
+				seen.disabled = [...form.querySelectorAll("select")[0].options].map((o) => o.disabled)
 			})
 		} finally {
 			API.get_context = originalContext
@@ -804,6 +827,8 @@ describe("returns picker and credit-covered sale (live run MTRIP-26-00005)", () 
 			"ACC-SINV-2026-00001 · 01-11 · 1 Kg · 1,325 · owes 825",
 			"MB-SINV-26-00001 · 01-11 · all returned · 2,650 · paid",
 		])
+		// the placeholder and an invoice with nothing left to return cannot be chosen (live run 2026-11-04)
+		expect(seen.disabled).toEqual([true, false, false, false, true])
 	})
 
 	it("reason and condition start empty on every new return line; Add waits for both", async () => {
@@ -923,5 +948,278 @@ describe("visit prints (v0.6.1)", () => {
 		expect(two.map((p) => p.label)).toEqual(["Print Bill", "Print Invoice", "Print Return Note RN-1", "Print Return Note RN-2", "Print All"])
 		expect(two.filter((p) => p.primary).map((p) => p.key)).toEqual(["bill"])
 		expect(two.at(-1).url).toBe("/mobile-sales-print?visit=CV-5")
+	})
+})
+
+// ---- v1.0.1: account menu, log out, session end, connection status --------------------------------------
+
+const buttonStarting = (root, label) => [...root.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith(label))
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const calls = (needle) => globalThis.fetch.mock.calls.filter(([url]) => String(url).includes(needle))
+const setOnLine = (value) => Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value })
+
+async function openLogout(root) {
+	root.querySelector(".account-button").click()
+	await settle()
+	buttonStarting(root.querySelector(".account-menu"), "Log out").click()
+	await settle()
+	return root.querySelector(".logout-dialog")
+}
+
+describe("account menu and log out (v1.0.1)", () => {
+	let go
+	beforeEach(() => {
+		go = vi.spyOn(nav, "go").mockImplementation(() => {})
+		globalThis.caches = {
+			keys: vi.fn(async () => ["mobile-sales-shell-v4", "mobile-sales-precache-v4-/assets", "other-app"]),
+			delete: vi.fn(async () => true),
+		}
+	})
+	afterEach(() => delete globalThis.caches)
+
+	it("the agent name opens a menu: full name, email, agent code, vehicle, app version and Log out", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			expect(root.querySelector(".account-menu")).toBeNull()
+			root.querySelector(".account-button").click()
+			await settle()
+			seen.menu = root.querySelector(".account-menu").textContent.replace(/\s+/g, " ")
+		})
+		expect(problems).toEqual([])
+		for (const part of ["Van Agent 1", "van1@evonet.lk", "MSA-0001", "VAN-01", "1.0.1", "Log out"]) expect(seen.menu).toContain(part)
+	})
+
+	it("log out: confirm, POST logout with the CSRF token, the cached host page dropped, memory cleared, login page", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			const dialog = await openLogout(root)
+			seen.dialog = dialog.textContent.replace(/\s+/g, " ")
+			seen.focused = document.activeElement?.textContent.trim()
+			expect(calls("/api/method/logout")).toEqual([])
+			buttonStarting(dialog, "Log out").click()
+			await settle()
+		})
+		expect(problems).toEqual([])
+		expect(seen.dialog).toContain("Log out? Unsaved visit data on this screen will be lost.")
+		expect(seen.dialog).not.toContain("A visit is in progress")
+		expect(seen.focused).toBe("Cancel")
+		const [[, init]] = calls("/api/method/logout")
+		expect(init.method).toBe("POST")
+		expect(init.headers["X-Frappe-CSRF-Token"]).toBe("token")
+		// only the shell (host page with the user's boot data) cache; static assets and other apps stay
+		expect(globalThis.caches.delete.mock.calls).toEqual([["mobile-sales-shell-v4"]])
+		expect(session.ctx).toBeNull()
+		expect(window.ms_boot).toBeNull()
+		expect(window.csrf_token).toBeNull()
+		expect(go).toHaveBeenCalledWith(LOGIN_URL)
+		expect(LOGIN_URL).toBe("/login?redirect-to=/mobile-sales")
+	})
+
+	it("the dialog says when a visit is in progress", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+			for (let i = 0; i < 3; i++) {
+				buttonStarting(root, "Next").click()
+				await settle()
+			}
+			buttonStarting(root, "Sale").click()
+			await settle()
+			buttonStarting(root, "+").click()
+			await settle()
+			seen.unsaved = unsaved.visit
+			seen.dialog = (await openLogout(root)).textContent
+			buttonStarting(root.querySelector(".logout-dialog"), "Cancel").click()
+			await settle()
+			seen.closed = root.querySelector(".logout-dialog")
+		})
+		expect(problems).toEqual([])
+		expect(seen.unsaved).toBe(true)
+		expect(seen.dialog).toContain("A visit is in progress and has not been submitted.")
+		expect(seen.closed).toBeNull()
+		expect(calls("/api/method/logout")).toEqual([])
+		expect(unsaved.visit).toBe(false) // the wizard left the screen
+	})
+
+	it("the dialog says when the settlement has changes not saved", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("Settling")), "/settlement", async (root) => {
+			seen.before = unsaved.settlement
+			const input = root.querySelector("input[type=number]")
+			input.value = "1"
+			input.dispatchEvent(new Event("input"))
+			await settle()
+			seen.after = unsaved.settlement
+			seen.dialog = (await openLogout(root)).textContent
+		})
+		expect(problems).toEqual([])
+		expect(seen.before).toBe(false)
+		expect(seen.after).toBe(true)
+		expect(seen.dialog).toContain("The settlement has changes that are not saved.")
+	})
+
+	it("log out without a connection is refused with a message; the user stays logged in", async () => {
+		server = (url) => {
+			if (url.endsWith("/api/method/logout")) throw new TypeError("Failed to fetch")
+		}
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			const dialog = await openLogout(root)
+			buttonStarting(dialog, "Log out").click()
+			await settle()
+			seen.dialog = root.querySelector(".logout-dialog").textContent
+			seen.ctx = session.ctx?.user
+		})
+		expect(problems).toEqual([])
+		expect(seen.dialog).toContain("Could not log out")
+		expect(seen.ctx).toBe("van1@evonet.lk")
+		expect(go).not.toHaveBeenCalled()
+		expect(globalThis.caches.delete).not.toHaveBeenCalled()
+	})
+
+	it("user switch: agent A logs out, agent B logs in on the same phone — nothing of A is visible", async () => {
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			buttonStarting(await openLogout(root), "Log out").click()
+			await settle()
+		})
+		expect(window.ms_boot).toBeNull()
+		const agentB = { ...AGENT, name: "MSA-0009", agent_name: "Van Agent 9", van_warehouse: "Van Agent 9 Van - ARL" }
+		const bootB = boot(agentB, { ...trip("In Field"), name: "MTRIP-26-00099", vehicle: "VAN-09", helper: null, van_warehouse: agentB.van_warehouse })
+		Object.assign(bootB.context, { user: "van9@evonet.lk", full_name: "Van Agent 9" })
+		const seen = {}
+		for (const path of ["/", "/history", "/route"]) {
+			seen[path] = await render(bootB, path, async (root) => {
+				root.querySelector(".account-button").click()
+				await settle()
+			})
+		}
+		expect(problems).toEqual([])
+		for (const text of Object.values(seen)) {
+			expect(text).toContain("Van Agent 9")
+			expect(text).toContain("van9@evonet.lk")
+			for (const ofA of ["Van Agent 1", "van1@evonet.lk", "MSA-0001", "MTRIP-26-00003", "VAN-01", "Kamal"]) expect(text).not.toContain(ofA)
+		}
+	})
+})
+
+describe("session ended (v1.0.1)", () => {
+	let go
+	beforeEach(() => {
+		go = vi.spyOn(nav, "go").mockImplementation(() => {})
+		accountTiming.expiredRedirect = 20
+	})
+	afterEach(() => (accountTiming.expiredRedirect = 2500))
+
+	it("a call refused because the login ended: a plain message, then the login page", async () => {
+		server = (url) => {
+			if (url.endsWith("get_van_stock")) return answer(403, { exc_type: "PermissionError" })
+			if (url.endsWith("frappe.auth.get_logged_user")) return answer(403, { exc_type: "PermissionError" })
+		}
+		const text = await render(boot(AGENT, trip("In Field")), "/", () => wait(60))
+		expect(problems).toEqual([])
+		expect(text).not.toContain("Something went wrong")
+		expect(go).toHaveBeenCalledWith(LOGIN_URL)
+		expect(session.ctx).toBeNull()
+	})
+
+	it("shows the session-ended message on screen instead of the raw error", async () => {
+		accountTiming.expiredRedirect = 5000
+		server = (url) => {
+			if (url.endsWith("get_van_stock")) return answer(403, {})
+			if (url.endsWith("frappe.auth.get_logged_user")) return answer(200, { message: "Guest" })
+		}
+		const text = await render(boot(AGENT, trip("In Field")), "/")
+		expect(problems).toEqual([])
+		expect(text).toContain("Your session has ended — please log in again")
+		expect(text).not.toContain("403")
+		expect(go).not.toHaveBeenCalled() // only after the delay
+		session.expired = false
+	})
+
+	it("a real permission refusal is shown as it is and the session goes on", async () => {
+		const refusal = JSON.stringify([JSON.stringify({ message: "You can only see your own trips." })])
+		server = (url) => {
+			if (url.endsWith("get_van_stock")) return answer(403, { exc_type: "PermissionError", _server_messages: refusal })
+		}
+		const text = await render(boot(AGENT, trip("In Field")), "/")
+		expect(problems).toEqual([])
+		expect(text).toContain("You can only see your own trips.")
+		expect(text).not.toContain("session has ended")
+		expect(session.expired).toBe(false)
+		expect(go).not.toHaveBeenCalled()
+	})
+})
+
+describe("online / offline status (v1.0.1)", () => {
+	const state = (root) => root.querySelector(".connection").dataset.state
+	const label = (root) => root.querySelector(".connection").textContent.trim()
+	beforeEach(() => {
+		setOnLine(true)
+		connection.value = "reconnecting"
+		online.value = true
+		connectionTiming.retry = 3000
+	})
+	afterEach(() => {
+		setOnLine(true)
+		connectionTiming.retry = 3000
+	})
+
+	it("is Online only after /api/method/ping answers", async () => {
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			seen.state = state(root)
+			seen.label = label(root)
+		})
+		expect(problems).toEqual([])
+		expect(calls("/api/method/ping").length).toBeGreaterThan(0)
+		expect(seen).toEqual({ state: "online", label: "Online" })
+	})
+
+	it("navigator says online but the ping fails (captive Wi-Fi): Reconnecting…, then Offline and saving blocked", async () => {
+		connectionTiming.retry = 250
+		server = (url) => {
+			if (url.endsWith("/api/method/ping")) return answer(200, {}) // a login portal's page, not "pong"
+		}
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			seen.first = [state(root), label(root)]
+			await wait(400)
+			await settle()
+			seen.then = [state(root), label(root)]
+			seen.banner = root.textContent
+		})
+		expect(problems).toEqual([])
+		expect(seen.first).toEqual(["reconnecting", "Reconnecting…"])
+		expect(seen.then).toEqual(["offline", "Offline"])
+		expect(seen.banner).toContain("No connection — you can look around")
+		expect(online.value).toBe(false)
+	})
+
+	it("goes Offline at once; back online: Reconnecting…, then Online, a 'Back online' toast and the screen reloads", async () => {
+		let pingOk = true
+		server = (url) => {
+			if (url.endsWith("/api/method/ping")) return pingOk ? answer(200, { message: "pong" }) : answer(503, {})
+		}
+		const seen = {}
+		await render(boot(AGENT, trip("In Field")), "/", async (root) => {
+			seen.start = state(root)
+			setOnLine(false)
+			window.dispatchEvent(new Event("offline"))
+			await settle()
+			seen.offline = [state(root), label(root), root.textContent.includes("No connection")]
+			const before = calls("get_my_day").length
+			setOnLine(true)
+			window.dispatchEvent(new Event("online"))
+			seen.reconnecting = connection.value
+			await settle()
+			await settle()
+			seen.back = [state(root), label(root), root.querySelector(".toast")?.textContent.trim()]
+			seen.reloaded = calls("get_my_day").length - before
+		})
+		expect(problems).toEqual([])
+		expect(seen.start).toBe("online")
+		expect(seen.offline).toEqual(["offline", "Offline", true])
+		expect(seen.reconnecting).toBe("reconnecting")
+		expect(seen.back).toEqual(["online", "Online", "Back online"])
+		expect(seen.reloaded).toBeGreaterThan(0)
 	})
 })

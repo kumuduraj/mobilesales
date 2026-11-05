@@ -15,6 +15,7 @@ from frappe.utils import cint, cstr, flt, now_datetime, strip_html
 
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
+import mobilesales
 from mobilesales.services import customers, invoicing, receipts, reconciliation, reports, returns, settlement
 from mobilesales.services import settings as ms_settings
 from mobilesales.services import trip as trip_service
@@ -190,6 +191,7 @@ def get_context() -> dict:
 	return {
 		"user": frappe.session.user,
 		"full_name": frappe.utils.get_fullname(frappe.session.user),
+		"app_version": mobilesales.__version__,
 		"agent": agent,
 		"trip": trip,
 		"last_trip": last_trip,

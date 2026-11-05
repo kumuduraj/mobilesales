@@ -107,9 +107,10 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { call, m } from "../api"
-import { money, online, qty, session } from "../state"
+import { onReconnect } from "../connection"
+import { money, online, qty, session, unsaved } from "../state"
 import { __ } from "../translation"
 
 const trip = computed(() => session.ctx?.trip)
@@ -123,6 +124,16 @@ const handed = computed(() => (data.value?.denominations || []).reduce((s, d) =>
 // Display only: the server recomputes expected cash and the variance on every save.
 const variance = computed(() => handed.value - Number(data.value?.expected_cash || 0))
 const hasExcess = computed(() => (data.value?.stock_lines || []).some((r) => missing(r) < 0))
+// What the server last returned; anything else typed in is unsaved (the logout dialog says so).
+const savedPayload = ref("")
+const dirty = computed(() => !!data.value?.editable && JSON.stringify(payload()) !== savedPayload.value)
+watch(dirty, (value) => (unsaved.settlement = value), { immediate: true })
+onBeforeUnmount(() => (unsaved.settlement = false))
+
+function loaded(value) {
+	data.value = value
+	savedPayload.value = value?.stock_lines ? JSON.stringify(payload()) : ""
+}
 
 function missing(row) {
 	return Number(row.expected_balance || 0) - Number(row.returned_qty || 0) - Number(row.damaged_qty || 0)
@@ -150,7 +161,7 @@ async function save() {
 	busy.value = true
 	message.value = ""
 	try {
-		data.value = await call(m("save_settlement"), { trip: trip.value.name, payload: payload() })
+		loaded(await call(m("save_settlement"), { trip: trip.value.name, payload: payload() }))
 		return true
 	} catch (e) {
 		message.value = e.message
@@ -174,7 +185,7 @@ async function confirmSubmit() {
 	confirming.value = false
 	busy.value = true
 	try {
-		data.value = await call(m("submit_settlement_for_verification"), { settlement_name: data.value.name })
+		loaded(await call(m("submit_settlement_for_verification"), { settlement_name: data.value.name }))
 	} catch (e) {
 		message.value = e.message
 	} finally {
@@ -182,12 +193,16 @@ async function confirmSubmit() {
 	}
 }
 
-onMounted(async () => {
+async function loadDraft() {
 	if (!trip.value || trip.value.status !== "Settling") return
 	try {
-		data.value = await call(m("get_settlement_draft"), { trip: trip.value.name })
+		loaded(await call(m("get_settlement_draft"), { trip: trip.value.name }))
 	} catch (e) {
 		message.value = e.message
 	}
-})
+}
+
+onMounted(loadDraft)
+// back online: fresh figures, unless the agent has typed counts not saved yet
+onReconnect(() => (dirty.value ? null : loadDraft()))
 </script>

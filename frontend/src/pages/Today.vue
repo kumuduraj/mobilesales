@@ -85,6 +85,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
+import { onReconnect } from "../connection"
 import { loadContext } from "../context"
 import { money, online, qty, session } from "../state"
 import { __ } from "../translation"
@@ -150,4 +151,5 @@ function confirmReopen() {
 }
 
 onMounted(() => Promise.all([loadStock(), loadMyDay()]))
+onReconnect(() => Promise.all([loadStock(), loadMyDay()]))
 </script>

@@ -1,5 +1,5 @@
-node_modules/
-frontend/node_modules/
+# no slash: a node_modules symlink is ignored too (one was committed in f0fc7d9)
+node_modules
 *.pyc
 __pycache__/
 .env

@@ -634,6 +634,7 @@ def sign_off(settlement) -> list:
 	}
 	by_label = {_(state): state for state in labels}
 	out = []
+	previous = None
 	for comment in frappe.get_all(
 		"Comment",
 		filters={"comment_type": "Workflow", "reference_doctype": "Mobile Settlement", "reference_name": settlement.name},
@@ -642,10 +643,13 @@ def sign_off(settlement) -> list:
 	):
 		state = by_label.get(comment.content) or (comment.content if comment.content in labels else None)
 		if state:
+			# Verify Cash within the tolerance goes straight from Pending Cashier to Approved: the cashier's step
+			step = _("Cashier (cash verified)") if state == "Approved" and previous == "Pending Cashier" else labels[state]
 			out.append(
-				frappe._dict(step=labels[state], state=state, user=comment.owner,
+				frappe._dict(step=step, state=state, user=comment.owner,
 					full_name=frappe.utils.get_fullname(comment.owner), at=comment.creation)  # fmt: skip
 			)
+			previous = state
 	return out
 
 

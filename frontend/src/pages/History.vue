@@ -30,6 +30,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
+import { onReconnect } from "../connection"
 import VisitPrints from "../components/VisitPrints.vue"
 import { money, session } from "../state"
 
@@ -39,7 +40,7 @@ const loading = ref(false)
 const message = ref("")
 const time = (value) => (value || "").slice(11, 16)
 
-onMounted(async () => {
+async function loadVisits() {
 	if (!trip.value) return
 	loading.value = true
 	try {
@@ -49,5 +50,8 @@ onMounted(async () => {
 	} finally {
 		loading.value = false
 	}
-})
+}
+
+onMounted(loadVisits)
+onReconnect(loadVisits)
 </script>

@@ -3,6 +3,7 @@ a top-up, a credit sale, returns against today's invoice and against an older de
 route, a missed route customer, a stock shortage and a cash shortage; every report total is compared with the
 ledgers (GL, Payment Ledger, Stock Ledger). Flows run as the real role users (rule 13)."""
 
+import re
 from unittest.mock import patch
 
 import frappe
@@ -309,6 +310,11 @@ class TestReports(SettlementTestBase):
 		self.assertAlmostEqual(report.cash.variance, -20, 2)
 		self.assertEqual([x.state for x in report.signoff], ["Pending Store", "Pending Cashier", "Approved"])
 		self.assertEqual([x.user for x in report.signoff], [self.agent_a.user, STORE_KEEPER, CASHIER])
+		# Verify Cash within the tolerance approves at once: the step is the cashier's (live run 2026-11-04)
+		self.assertEqual([x.step for x in report.signoff],
+			["Agent (submitted for verification)", "Store keeper (stock verified)", "Cashier (cash verified)"])  # fmt: skip
+		cashier = frappe.utils.get_fullname(CASHIER)
+		self.assertEqual([r["detail"].split(" · ")[0] for r in rows if r.get("line") == "Cashier (cash verified)"], [f"{cashier} ({CASHIER})"])
 		sections = [r["section"] for r in rows if r.get("is_section")]
 		self.assertEqual(len(sections), 13)
 		self.assertTrue(sections[0].startswith("1.") and sections[-1].startswith("12."))
@@ -319,6 +325,7 @@ class TestReports(SettlementTestBase):
 		for text in ("Mobile Trip Day Report", "Visit log", "Missed customers", "Sales by invoice", "Customer returns",
 			"Stock reconciliation", "Cash reconciliation", "Sign-off", self.v1.sales_invoice, self.others[0]):  # fmt: skip
 			self.assertIn(text, html)
+		self.assertRegex(" ".join(frappe.utils.strip_html(html).split()), rf"Cashier \(cash verified\)\s*{re.escape(cashier)}")
 		with patch("frappe.utils.pdf.get_pdf", return_value=blank_pdf()) as pdf:
 			first = day_report.attach_day_report(done.name)
 			again = day_report.attach_day_report(done.name)

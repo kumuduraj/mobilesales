@@ -73,13 +73,12 @@ Bluetooth printing on the van's 4-inch printer through the Evonet Android print 
 
 ## 9. Repost after a settlement with returns and damage
 
-- **Now (found 2026-11-03, docs/PERFORMANCE.md §3):** a settlement posts its return Stock Entry and its damage Stock
-  Entry from the van at the same posting time. When both carry the same item, ERPNext counts the second as back-dated
-  (a stock posting at the same moment already exists) and queues a Repost Item Valuation for that item and van. On the
-  seed that was about 6 per day for 10 vans. Each is small (the van has no later postings that evening) and the
-  scheduler runs it within the hour. Valuation is correct after the repost.
-- **To do:** post both movements in one Stock Entry (one row per target warehouse), or give the damage entry its own
-  posting second, so the settlement queues no repost at all.
+- **Found 2026-11-03 on the perf seed, not seen in real use:** a settlement posts its return Stock Entry and its damage
+  Stock Entry from the van. When both carry the same item at exactly the same posting time, ERPNext counts the second
+  as back-dated and queues an item-wise Repost Item Valuation. The seed pinned the settlement clock to the minute, so
+  it hit this about 6 times a day. The v1.0.0 live run (MSET-26-00005, 2026-11-04: return, damage and customer-return
+  damage of ARCP003) queued none: real postings carry distinct timestamps.
+- **To do (low):** post both movements in one Stock Entry (one row per target warehouse) so the case cannot arise.
 
 ## 10. Reading whole histories (performance, docs/PERFORMANCE.md §4)
 
@@ -90,7 +89,10 @@ Bluetooth printing on the van's 4-inch printer through the Evonet Android print 
   - Salesperson Performance and Daily Trip Summary build every trip's full summary (4.6–4.7 s median for 600 trips,
     worst 6.7 s cold);
   - ERPNext's own FIFO batch pick sums every batch entry of the item in the warehouse (core, not changed).
-- **To do:** a covering index on GL Entry (`account, is_cancelled, debit, credit`, needs approval as an index on an
-  ERPNext table) or a check bounded by the last settled zero balance; store the trip summary figures on the trip at
-  settlement and let the two reports read those; ask the server owner to size `innodb_buffer_pool_size` for all
-  benches on the server.
+- **Decided for v1.1 (Raj, 2026-11-04):**
+  - The settlement cash check becomes bounded: the agent cash account's balance is summed from the last settlement
+    that left it at zero, not over the whole history. Our code only; no new index on an ERPNext table.
+  - Each trip's summary figures are stored on the trip at settlement (and cleared on cancel); Salesperson Performance
+    and Daily Trip Summary read those rows instead of rebuilding every trip's summary.
+  - `innodb_buffer_pool_size`: the server owner raises it (2 GB recommended, ADMIN_GUIDE.md §9). Not app work.
+  - The ERPNext FIFO batch sum stays (core).
