@@ -15,7 +15,7 @@ from werkzeug.wrappers import Request
 from erpnext.stock.doctype.batch.batch import get_batch_qty
 
 from mobilesales.api import mobile as api
-from mobilesales.services import invoicing, returns
+from mobilesales.services import invoicing, prints, returns
 from mobilesales.services import trip as trip_service
 from mobilesales.tests.utils import PREFIX, MobileSalesTestCase, as_user, leaf
 
@@ -516,6 +516,23 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		self.assertNotIn("Return credit", invoice)
 		self.assertIn(f"{visit.sales_invoice} is not a return note.", self.note(visit.sales_invoice))
 
+	def test_prints_rounding_line_when_the_credit_is_rounded(self):
+		"""Live run 2026-11-04: 0.5 Kg x 1,325.00 = 662.50 on the lines, 662.00 credited. The Return Note and the
+		Bill show the difference as a Rounding line, so the printed lines add up to the credit."""
+		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "max_discount_pct", 10)
+		earlier = self.visit(items=[{"item_code": self.plain_item, "qty": 2, "discount_percentage": 0.3}])  # 99.70 a unit
+		visit = self.visit(outcome="Return Only", return_items=[self.ret(self.plain_item, 1, earlier.sales_invoice)])
+		note = self.credit_note(visit)
+		figures = prints.mobile_return_note_print(note)
+		self.assertEqual((figures.lines_total, figures.credit, figures.rounding), (99.7, 100, 0.3))
+
+		returned = self.note(note.name)
+		self.assertRegex(returned, r"Lines\s*\D*99\.70\s*Rounding\s*\D*0\.30\s*Total credit\s*\D*100\.00")
+		self.assertNotIn("-", re.search(r"Rounding\s*(\D*)0\.30", returned).group(1))  # credit side: 99.70 + 0.30
+		bill = self.bill(visit)
+		self.assertRegex(bill, r"-\D*99\.70 against .*? Rounding\s*\D*0\.30\s*Return total\s*-\D*100\.00")
+		self.assertIn("-", re.search(r"Rounding\s*(\D*)0\.30", bill).group(1))  # bill side: -99.70 - 0.30
+
 	def test_prints_sale_and_return_with_split_set_off(self):
 		self.set_setting("allow_credit_sales", 1)
 		frappe.db.set_value("Mobile Sales Agent", self.agent_a.name, "credit_limit_per_invoice", 1000)
@@ -556,6 +573,8 @@ class TestReturnsAndDiscounts(MobileSalesTestCase):
 		):  # fmt: skip
 			self.assertRegex(returned, pattern)
 		self.assertNotIn("Paid (cash)", returned)
+		self.assertNotIn("Rounding", bill)  # the lines add up to the credit: no rounding line
+		self.assertNotIn("Rounding", returned)
 
 		# Print All (/mobile-sales-print): bill → invoice → return note, as the agent; never for another agent
 		status, html = self.render_print_all(visit.name, self.agent_a.user)
