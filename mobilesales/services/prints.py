@@ -59,6 +59,8 @@ def journal_pairs(journal: str, rows=None) -> list:
 
 
 def previous_outstanding(customer: str, company: str, exclude=()) -> float:
+	"""The customer's balance on every other submitted invoice and credit note: what they owe, or below 0 the
+	credit they hold (printed as "Credit", v1.0.2)."""
 	return flt(
 		sum(
 			frappe.get_all(
@@ -67,8 +69,6 @@ def previous_outstanding(customer: str, company: str, exclude=()) -> float:
 					"customer": customer,
 					"company": company,
 					"docstatus": 1,
-					"is_return": 0,
-					"outstanding_amount": [">", 0],
 					"name": ["not in", list(exclude) or [""]],
 				},
 				pluck="outstanding_amount",
@@ -167,7 +167,7 @@ def mobile_visit_bill_print(visit) -> dict:
 
 	payable = invoicing.payable_amount(sale) if sale else 0
 	on_sale = flt(applied.get(sale.name, 0), 2) if sale else 0
-	exclude = [sale.name] if sale else []
+	exclude = ([sale.name] if sale else []) + [n.name for n in notes]  # this visit's own documents are above
 	return frappe._dict(
 		agent_name=visit.agent_name or agent_name(visit.mobile_trip),
 		sale=sale,

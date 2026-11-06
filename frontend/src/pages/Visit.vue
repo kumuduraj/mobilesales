@@ -3,6 +3,10 @@
 		<div class="card">
 			<div class="text-sm text-gray-500">{{ __("Visit") }}</div>
 			<div class="text-lg font-semibold">{{ card?.customer_name || customer }}</div>
+			<div v-if="customerLine(card)" class="customer-line text-xs text-gray-500">{{ customerLine(card) }}</div>
+			<div v-if="card?.pending_name" class="pending-name mt-1 text-xs font-medium text-amber-700">
+				{{ __("Name change pending: {0}", [card.pending_name]) }}
+			</div>
 			<div v-if="!done" class="mt-2 flex gap-1">
 				<div v-for="(s, i) in steps" :key="s" class="h-1.5 flex-1 rounded-full" :class="i <= stepIndex ? 'bg-gray-900' : 'bg-gray-200'"></div>
 			</div>
@@ -33,7 +37,10 @@
 				<div class="text-gray-500">{{ __("Contact") }}</div><div>{{ contactName || "—" }}</div>
 				<div class="text-gray-500">{{ __("Address") }}</div><div>{{ card.address ? `${card.address.address_line1}, ${card.address.city}` : "—" }}</div>
 				<div class="text-gray-500">{{ __("Tax ID") }}</div><div>{{ card.tax_id || "—" }}</div>
-				<div class="text-gray-500">{{ __("Outstanding") }}</div><div class="font-semibold">{{ money(card.outstanding) }}</div>
+				<div class="text-gray-500">{{ balance(card.balance ?? card.outstanding).label }}</div>
+				<div class="card-balance font-semibold" :class="{ 'text-green-700': balance(card.balance ?? card.outstanding).credit }">
+					{{ balance(card.balance ?? card.outstanding).text }}
+				</div>
 				<template v-if="card.credit_available">
 					<div class="text-gray-500">{{ __("Credit available") }}</div><div class="font-semibold text-green-700">{{ money(card.credit_available) }}</div>
 				</template>
@@ -99,11 +106,33 @@
 			</div>
 			<div v-if="form.outcome === 'Sale'" class="card space-y-2">
 				<div class="font-semibold">{{ __("Cart (from van stock)") }}</div>
-				<div v-for="it in vanItems" :key="it.item_code" class="border-t border-gray-100 py-2">
-					<div class="flex items-center justify-between">
-						<div>
+				<input v-model.trim="cartQuery" class="field cart-search" type="search" :placeholder="__('Search item name or code')" />
+				<div class="flex gap-2">
+					<button
+						v-for="chip in cartChips"
+						:key="chip.key"
+						type="button"
+						class="cart-chip rounded-full border px-3 py-1 text-sm"
+						:class="cartFilter === chip.key ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 text-gray-700'"
+						:aria-pressed="cartFilter === chip.key ? 'true' : 'false'"
+						@click="cartFilter = chip.key"
+					>
+						{{ chip.label }} ({{ chip.count }})
+					</button>
+				</div>
+				<div v-if="!shownItems.length" class="cart-empty text-sm text-gray-500">
+					{{ cartFilter === "cart" && !cartQuery ? __("Nothing in the cart yet.") : __("No van item matches.") }}
+				</div>
+				<div v-for="it in shownItems" :key="it.item_code" class="cart-row border-t border-gray-100 py-2" :data-item="it.item_code">
+					<div class="flex items-center justify-between gap-2">
+						<img v-if="it.image" :src="it.image" alt="" loading="lazy" class="cart-thumb h-10 w-10 flex-none rounded object-cover" />
+						<div class="min-w-0 flex-1">
 							<div class="font-medium">{{ it.item_name }}</div>
-							<div class="text-xs text-gray-500">{{ __("In van") }}: {{ qty(it.actual_qty) }} {{ it.stock_uom }}</div>
+							<div class="text-xs text-gray-500">
+								{{ it.item_code }} · {{ __("In van") }}: {{ qty(it.actual_qty) }} {{ it.stock_uom }}<template
+									v-if="it.price_list_rate != null"
+								> · <span class="cart-price">{{ money(it.price_list_rate) }} / {{ it.stock_uom }}</span></template>
+							</div>
 						</div>
 						<div class="flex items-center gap-1">
 							<button class="btn-secondary h-11 w-11 min-h-0 px-0" @click="bump(it, -1)">−</button>
@@ -132,7 +161,7 @@
 							/>
 						</label>
 					</div>
-					<div v-if="lineFor(it.item_code)" class="mt-1 text-sm text-gray-600">
+					<div v-if="lineFor(it.item_code)" class="cart-line-total mt-1 text-sm text-gray-600">
 						{{ qty(lineFor(it.item_code).qty) }} × {{ money(lineFor(it.item_code).rate) }} = {{ money(lineFor(it.item_code).amount) }}
 						<span v-if="!lineFor(it.item_code).enough_stock" class="ml-1 font-medium text-red-700">{{ __("not enough in van") }}</span>
 					</div>
@@ -159,6 +188,7 @@
 		<!-- 4b. Returns -->
 		<div v-else-if="step === 'returns'" class="card space-y-3">
 			<div class="font-semibold">{{ __("Returns from the customer") }}</div>
+			<div class="customer-line text-xs text-gray-500">{{ [card.customer_name, customerLine(card)].filter(Boolean).join(" · ") }}</div>
 			<div v-for="(r, i) in returnRows" :key="i" class="flex items-start justify-between border-t border-gray-100 py-2 text-sm">
 				<div>
 					<div class="font-medium">{{ r.item_name || r.item_code }} × {{ qty(r.qty) }} {{ r.uom }}</div>
@@ -235,6 +265,7 @@
 			</div>
 			<div>
 				<div class="label">{{ __("Previous outstanding invoices") }}</div>
+				<div class="customer-line mb-1 text-xs text-gray-500">{{ [card.customer_name, customerLine(card)].filter(Boolean).join(" · ") }}</div>
 				<div v-if="!card.outstanding_invoices.length" class="text-sm text-gray-500">{{ __("None") }}</div>
 				<div v-for="inv in card.outstanding_invoices" :key="inv.name" class="flex items-center justify-between border-t border-gray-100 py-2">
 					<label class="flex items-center gap-2 text-sm">
@@ -352,7 +383,7 @@ import { call, m } from "../api"
 import { onReconnect } from "../connection"
 import { loadContext } from "../context"
 import VisitPrints from "../components/VisitPrints.vue"
-import { money, newClientRef, online, qty, session, unsaved } from "../state"
+import { balance, customerLine, money, newClientRef, online, qty, session, unsaved } from "../state"
 import { __ } from "../translation"
 
 const props = defineProps({ customer: { type: String, required: true } })
@@ -394,6 +425,23 @@ const shelf = ref([])
 const cart = reactive({})
 const discounts = reactive({})
 const discountMode = reactive({})
+// the cart: every van item, searchable; "In cart" shows only lines with a quantity; those always come first
+const cartQuery = ref("")
+const cartFilter = ref("all")
+const inCart = (code) => Number(cart[code] || 0) > 0
+const cartChips = computed(() => [
+	{ key: "cart", label: __("In cart"), count: vanItems.value.filter((it) => inCart(it.item_code)).length },
+	{ key: "all", label: __("All van items"), count: vanItems.value.length },
+])
+const shownItems = computed(() => {
+	const q = cartQuery.value.toLowerCase()
+	return vanItems.value
+		.map((it, position) => ({ it, position }))
+		.filter(({ it }) => cartFilter.value === "all" || inCart(it.item_code))
+		.filter(({ it }) => !q || `${it.item_name} ${it.item_code}`.toLowerCase().includes(q))
+		.sort((a, b) => inCart(b.it.item_code) - inCart(a.it.item_code) || a.position - b.position)
+		.map(({ it }) => it)
+})
 // every cart line starts with a % discount (the select is never blank)
 watch(
 	() => Object.keys(cart).filter((code) => Number(cart[code]) > 0),

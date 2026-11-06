@@ -6,6 +6,8 @@ const CUSTOMER_UPDATE_METHOD = "mobilesales.services.customer_update.";
 frappe.ui.form.on("Customer Visit", {
 	setup(frm) {
 		frm.set_query("mobile_trip", () => ({ filters: { status: "In Field", docstatus: 1 } }));
+		// name, customer name and "<address line 1>, <city> · …<last 4 of mobile>" in the link search
+		frm.set_query("customer", () => ({ query: "mobilesales.services.customers.customer_query" }));
 		frm.set_query("item_code", "sale_items", () => ({ filters: { is_sales_item: 1, disabled: 0 } }));
 		frm.set_query("sales_invoice", "collect_previous", () => ({
 			query: "mobilesales.api.mobile.outstanding_invoice_query",

@@ -4,6 +4,8 @@ Old values are read from Customer, its primary Contact and primary Billing Addre
 saved, so the day report can show before -> after. On submit the changes are applied directly or
 left Pending Approval for a supervisor."""
 
+from contextlib import contextmanager
+
 import frappe
 from frappe import _
 from frappe.contacts.doctype.address.address import get_default_address
@@ -62,14 +64,21 @@ def capture_changes(visit):
 	visit.customer_update_status = "Not Requested"
 
 
-def on_visit_submit(visit, apply_directly: bool):
+NAME_KEY = "customer.customer_name"
+
+
+def on_visit_submit(visit, apply_directly: bool, direct_name_change: bool = False):
+	"""Apply the changes or leave them for a supervisor. A new customer name always waits for approval unless
+	Settings > Allow Direct Name Change: the name is what invoices and reports carry (v1.0.2)."""
 	if not visit.changes:
 		return
-	if apply_directly:
-		apply_changes(visit, visit.changes)
-		_set_status(visit, visit.changes, "Applied")
-	else:
-		_set_status(visit, visit.changes, "Pending Approval")
+	direct = [r for r in visit.changes if apply_directly and (r.field_key != NAME_KEY or direct_name_change)]
+	pending = [r for r in visit.changes if r not in direct]
+	if direct:
+		apply_changes(visit, direct)
+		_set_status(visit, direct, "Applied")
+	if pending:
+		_set_status(visit, pending, "Pending Approval")
 
 
 @frappe.whitelist()
@@ -125,7 +134,24 @@ def apply_changes(visit, rows):
 		customer.customer_primary_address = _apply_address(customer, visit, values).name
 
 	customer.flags.ignore_permissions = True
-	customer.save()
+	with _contact_rights():
+		customer.save()
+
+
+@contextmanager
+def _contact_rights():
+	"""ERPNext's Customer.on_update marks the primary Contact again through frappe.set_value, a save checked
+	against the current user. A supervisor approving an update may not edit Contacts (agents may): then that save
+	runs as Administrator. The role check came first and every write here ignores permissions already."""
+	if frappe.has_permission("Contact", "write"):
+		yield
+		return
+	user = frappe.session.user
+	frappe.set_user("Administrator")
+	try:
+		yield
+	finally:
+		frappe.set_user(user)
 
 
 def _apply_contact(customer, values):

@@ -2,6 +2,7 @@
 // For license information, please see license.txt
 
 const TRIP_METHOD = "mobilesales.services.trip.";
+const BATCH_QUERY = "mobilesales.services.stock.load_batch_query";
 
 frappe.ui.form.on("Mobile Trip", {
 	setup(frm) {
@@ -12,6 +13,11 @@ frappe.ui.form.on("Mobile Trip", {
 		}));
 		frm.set_query("item_code", "load_items", () => ({
 			filters: { is_stock_item: 1, disabled: 0 },
+		}));
+		// optional batch (FIFO when empty): this item's batches with stock at the source, oldest first
+		frm.set_query("batch_no", "load_items", (doc, cdt, cdn) => ({
+			query: BATCH_QUERY,
+			filters: { item_code: locals[cdt][cdn].item_code, warehouse: doc.source_warehouse },
 		}));
 	},
 
@@ -80,11 +86,12 @@ frappe.ui.form.on("Mobile Trip", {
 frappe.ui.form.on("Mobile Trip Load Item", {
 	item_code(frm, cdt, cdn) {
 		const row = locals[cdt][cdn];
+		if (row.batch_no) frappe.model.set_value(cdt, cdn, "batch_no", null); // a batch belongs to one item
 		if (!row.item_code) return;
-		frappe.db.get_value("Item", row.item_code, "stock_uom").then((r) => {
-			const stock_uom = r.message && r.message.stock_uom;
-			if (!stock_uom) return;
-			frappe.model.set_value(cdt, cdn, { uom: stock_uom, conversion_factor: 1 });
+		frappe.db.get_value("Item", row.item_code, ["stock_uom", "has_batch_no"]).then((r) => {
+			const item = r.message || {};
+			if (!item.stock_uom) return;
+			frappe.model.set_value(cdt, cdn, { uom: item.stock_uom, conversion_factor: 1, has_batch_no: item.has_batch_no });
 		});
 	},
 	uom(frm, cdt, cdn) {
@@ -181,6 +188,18 @@ function show_top_up_dialog(frm) {
 							frappe.db.get_value("Item", item_code, "stock_uom").then((r) => {
 								if (r.message && r.message.stock_uom) uom_field.set_value(r.message.stock_uom);
 							});
+						},
+					},
+					{
+						fieldname: "batch_no",
+						fieldtype: "Link",
+						options: "Batch",
+						label: __("Batch (optional)"),
+						in_list_view: 1,
+						description: __("Empty: oldest batches first (FIFO)"),
+						get_query() {
+							const item_code = this.grid_row?.on_grid_fields_dict?.item_code?.get_value();
+							return { query: BATCH_QUERY, filters: { item_code, warehouse: frm.doc.source_warehouse } };
 						},
 					},
 					{
