@@ -40,11 +40,18 @@ as you work.
 
 ## 2. Route
 
-*Today's route* lists the planned customers in order, with their outstanding balance. A tick means you've visited
-them today.
+*Today's route* lists your customers in route order, numbered 1, 2, 3…. Under each name you see its address,
+city and the last four digits of its mobile (*"No 1, Main Road, JA-ELA · …0002"*), so two shops with the same name
+can't be mixed up, and its balance: **Outstanding** (what they owe) or, in green, **Credit** (credit they hold
+from returns).
 
-- Tap a customer to start a visit.
-- A customer not on your route: use the search (name or mobile number). The visit is marked **Off route**.
+- **NEXT** (yellow) is the first customer due today you haven't visited yet; tap **Start visit**. After the visit,
+  NEXT moves on.
+- Visited customers show **✓** and the outcome (*Sale*, *No Sale*, …).
+- You may visit in another order; nothing is blocked. NEXT stays on the first one you skipped. Your supervisor sees
+  out-of-order visits in the Route Coverage report.
+- **A customer not on your route:** type part of the name, mobile number, address or city in the search box, then
+  **Visit**. The visit is marked **Off route**.
 - **New customer**: name, mobile number, address and city; customer group and territory start with the usual
   values. You can tick **Add to route**. If a customer with the same mobile already exists, the app opens that one.
 
@@ -55,13 +62,17 @@ A visit has steps; **Next** and **Back** move between them.
 1. **Check-in:** tap **Capture location**. A check-in photo of the shop is optional.
 2. **Customer details:** if the name, phone, contact person, address, city or Tax ID changed, tick
    **Details changed — update them** and fill only what changed (*"Leave a field empty to keep the current
-   value"*). Your supervisor may need to approve it first.
+   value"*). Your supervisor may need to approve it first; a **new name always** waits for the supervisor, and
+   the customer shows *"Name change pending: <new name>"* until then.
 3. **Shelf stock:** count what the shop has of our items (**Add shelf item**): quantity, expiry and competitor
    item if you see one.
 4. **Outcome:**
-   - **Sale:** add items from your van (*Cart (from van stock)*). The price comes from the price list. You may give
-     a line discount (**Disc. %** or **Disc. amt**) and an **Invoice discount**, but together only up to your limit
-     (*Your discounts … up to …*). If you ask for more, the app says so.
+   - **Sale:** add items from your van (*Cart (from van stock)*). Each item shows its code, how much is in the van,
+     its price and a picture if it has one. With many items, type part of the name or code in the search box;
+     **In cart** shows only what you've added, **All van items** everything. Items you've added move to the top
+     and show their line total (*2 × LKR 1,325.00 = LKR 2,650.00*). You may give a line discount (**Disc. type**
+     % or Amount, then **Discount**) and an **Invoice discount**, but together only up to your limit (*Your
+     discounts … up to …*). If you ask for more, the app says so.
    - **No Sale:** choose the reason (some reasons need a remark).
    - **Shop Closed:** nothing else to fill.
    - **Collection Only:** only collect money owed.

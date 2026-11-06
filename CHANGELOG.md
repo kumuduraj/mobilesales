@@ -1,3 +1,34 @@
+## v1.0.2 — route, cart, customer and batch usability
+
+Customers:
+- Every customer on the phone (Route list, search results, visit header, History, the previous-outstanding and
+  return-invoice pickers) and in Desk link search (Customer Visit, Mobile Route) shows a second line
+  "<address line 1>, <city> · …<last 4 digits of mobile>". The phone search also matches address line 1, city and
+  mobile (spaces and dashes ignored).
+- A negative balance shows as green "Credit: LKR x" (Route list, search results, customer card); the Bill and
+  Invoice print "Credit" instead of a negative "Previous Outstanding", which is now the net of the customer's other
+  invoices and credit notes.
+- A new customer name from the phone always waits for supervisor approval, even with Apply Customer Updates
+  Directly (new setting Allow Direct Name Change, off). The card shows "Name change pending: <new name>".
+- Fix: a supervisor approving a customer update for a customer that already had a primary contact got a permission
+  error (ERPNext re-marks the primary Contact as the approving user, who may not edit Contacts).
+
+Route:
+- One order everywhere: Mobile Route rows are sorted by Sequence and numbered 1, 2, 3… on save; a drag in Desk
+  renumbers by row order. Patch `renumber_route_sequence` numbers existing routes once (idempotent).
+- Phone: numbers, ✓ and the outcome for visited customers, NEXT (first due, not visited) with Start visit.
+  Visiting out of order is allowed; Route Coverage adds "Visited out of sequence" and a per-trip count.
+
+Cart: search by item name / code, "In cart" / "All van items", qty in van, list price, thumbnail, line totals;
+lines with a quantity first.
+
+Batch on load (FIFO stays the default): optional Batch on load and top-up rows of batch items, picked from that
+item's unexpired batches with stock at the source, oldest first. Same item on several rows with different batches;
+each batch's rows checked against its quantity; a FIFO row of an item that also has chosen rows takes the oldest of
+what they leave (one Stock Entry). Sales, settlement returns and van stock are unchanged.
+
+Schema: Mobile Trip Load Item.batch_no, Mobile Sales Settings.allow_direct_name_change. Service worker cache v5.
+
 ## v1.0.1 — phone app polish
 
 Account and log out:

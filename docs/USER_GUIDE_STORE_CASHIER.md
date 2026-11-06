@@ -15,7 +15,15 @@ You work in ERPNext Desk (a computer or tablet), workspace **Mobile Sales**. The
      shows what the store has.
 3. **Save**, check the list, then **Submit**.
 
-The app moves the stock from the store into the van (Stock Entry). Batch items are picked oldest batch first.
+The app moves the stock from the store into the van (Stock Entry). Batch items are picked oldest batch first,
+unless you choose a batch:
+
+- **Batch** (optional, batch items only): the list shows that item's batches in the store that are not expired,
+  oldest first, with what each holds: *"<batch> · 12 Kg available · exp <date> · mfg <date>"*. Pick one to send
+  exactly that batch. *Available at source* then shows that batch's quantity.
+- To send two batches of one item, add the item twice, each row with its own batch.
+- Rows of one batch may not need more than the batch holds; the message says the batch and what is available.
+- Leave Batch empty for the usual oldest-first.
 The trip shows **Loaded**, and the agent can now start it on the phone.
 
 - *"Previous trip not settled: van … still holds stock"*: the vehicle's last trip isn't settled. Finish that
@@ -23,7 +31,8 @@ The trip shows **Loaded**, and the agent can now start it on the phone.
 - *"… already has an open trip"*: one open trip per agent and per vehicle.
 - Not enough in the store: the submit is refused. Load less, or receive stock first.
 
-**Top-up during the day:** open the trip → **Top-up Load** → items and quantities. Another transfer is made into
+**Top-up during the day:** open the trip → **Top-up Load** → items and quantities (and a **Batch** if you want
+a particular one, same rules as the load). Another transfer is made into
 the van. **Van Stock** on the trip shows what the van holds now.
 
 **Cancel a trip:** only while it is *Loaded* (no visits yet), and only a supervisor can do it. Everything goes
