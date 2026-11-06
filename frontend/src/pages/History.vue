@@ -6,6 +6,7 @@
 			<div class="flex items-start justify-between">
 				<div>
 					<div class="font-semibold">{{ v.customer_name }}</div>
+					<div v-if="customerLine(v)" class="customer-line text-xs text-gray-500">{{ customerLine(v) }}</div>
 					<div class="text-xs text-gray-500">{{ v.name }} · {{ time(v.visit_datetime) }}</div>
 				</div>
 				<div class="flex flex-col items-end gap-1">
@@ -32,7 +33,7 @@ import { computed, onMounted, ref } from "vue"
 import { call, m } from "../api"
 import { onReconnect } from "../connection"
 import VisitPrints from "../components/VisitPrints.vue"
-import { money, session } from "../state"
+import { customerLine, money, session } from "../state"
 
 const trip = computed(() => session.ctx?.trip)
 const visits = ref([])

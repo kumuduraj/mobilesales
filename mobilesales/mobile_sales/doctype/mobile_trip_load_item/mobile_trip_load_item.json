@@ -8,6 +8,7 @@
   "item_code",
   "item_name",
   "has_batch_no",
+  "batch_no",
   "uom",
   "conversion_factor",
   "column_break_qty",
@@ -23,15 +24,15 @@
    "label": "Item",
    "options": "Item",
    "reqd": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 2
   },
   {
    "fieldname": "item_name",
    "fieldtype": "Data",
    "label": "Item Name",
    "fetch_from": "item_code.item_name",
-   "read_only": 1,
-   "in_list_view": 1
+   "read_only": 1
   },
   {
    "fieldname": "has_batch_no",
@@ -41,11 +42,22 @@
    "read_only": 1
   },
   {
+   "fieldname": "batch_no",
+   "fieldtype": "Link",
+   "options": "Batch",
+   "label": "Batch",
+   "in_list_view": 1,
+   "depends_on": "eval:doc.has_batch_no",
+   "columns": 2,
+   "description": "Optional. Empty: the oldest batches are taken (FIFO). Only batches of this item with stock in the source warehouse, not expired."
+  },
+  {
    "fieldname": "uom",
    "fieldtype": "Link",
    "label": "UOM",
    "options": "UOM",
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "conversion_factor",
@@ -63,7 +75,8 @@
    "fieldtype": "Float",
    "label": "Qty",
    "reqd": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 1
   },
   {
    "fieldname": "stock_uom",
@@ -78,7 +91,8 @@
    "fieldtype": "Float",
    "label": "Stock Qty",
    "read_only": 1,
-   "in_list_view": 1
+   "in_list_view": 1,
+   "columns": 2
   },
   {
    "fieldname": "available_at_source",
@@ -86,13 +100,14 @@
    "label": "Available at Source",
    "read_only": 1,
    "in_list_view": 1,
-   "no_copy": 1
+   "no_copy": 1,
+   "columns": 2
   }
  ],
  "index_web_pages_for_search": 0,
  "istable": 1,
  "links": [],
- "modified": "2026-11-01 13:00:00.000000",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Trip Load Item",

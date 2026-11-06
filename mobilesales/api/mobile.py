@@ -234,7 +234,9 @@ def get_van_stock(trip: str) -> list[dict]:
 		.orderby(bin.item_code)
 		.run(as_dict=True)
 	)
+	prices = list_prices(doc, [r.item_code for r in rows])
 	for row in rows:
+		row.price_list_rate = prices.get(row.item_code)  # the cart's "price" before pricing rules and discounts
 		row.batches = []
 		if row.has_batch_no:
 			row.batches = [
@@ -245,6 +247,29 @@ def get_van_stock(trip: str) -> list[dict]:
 	return rows
 
 
+def list_prices(trip, item_codes) -> dict:
+	"""{item: rate per stock UOM} from the agent's selling price list, valid on the trip date (no customer or
+	batch specific prices)."""
+	if not item_codes:
+		return {}
+	price_list = frappe.db.get_value("Mobile Sales Agent", trip.agent, "selling_price_list") or (
+		ms_settings.get_settings().selling_price_list
+	)
+	out = {}
+	for row in frappe.db.sql(
+		"""select ip.item_code, ip.price_list_rate from `tabItem Price` ip join `tabItem` i on i.name = ip.item_code
+		where ip.price_list = %(price_list)s and ip.item_code in %(items)s
+			and ifnull(ip.customer, '') = '' and ifnull(ip.batch_no, '') = ''
+			and (ip.uom is null or ip.uom = '' or ip.uom = i.stock_uom)
+			and (ip.valid_from is null or ip.valid_from <= %(day)s) and (ip.valid_upto is null or ip.valid_upto >= %(day)s)
+		order by ip.valid_from asc""",
+		{"price_list": price_list, "items": tuple(item_codes), "day": trip.trip_date},
+		as_dict=True,
+	):
+		out[row.item_code] = flt(row.price_list_rate)  # the latest valid_from wins
+	return out
+
+
 # Route and customers
 
 
@@ -253,9 +278,14 @@ def get_route_plan(trip: str) -> list[dict]:
 	doc = own_trip(trip)
 	if not doc.route:
 		return []
-	visited = set(
-		frappe.get_all("Customer Visit", filters={"mobile_trip": doc.name, "docstatus": 1}, pluck="customer")
-	)
+	outcomes = {}  # the latest submitted visit of each customer on this trip
+	for v in frappe.get_all(
+		"Customer Visit",
+		filters={"mobile_trip": doc.name, "docstatus": 1},
+		fields=["customer", "outcome"],
+		order_by="visit_datetime asc, creation asc",
+	):
+		outcomes[v.customer] = v.outcome
 	rows = frappe.get_all(
 		"Mobile Route Customer",
 		filters={"parent": doc.route, "parenttype": "Mobile Route"},
@@ -264,9 +294,11 @@ def get_route_plan(trip: str) -> list[dict]:
 	)
 	outstanding = customers.outstanding_by_customer([r.customer for r in rows], doc.company)
 	for row in rows:
-		row.visited = row.customer in visited
+		row.visited = row.customer in outcomes
+		row.outcome = outcomes.get(row.customer)
+		row.due = reports.planned_on(row, doc.trip_date)  # the phone's NEXT is the first due, not visited
 		row.outstanding = outstanding.get(row.customer, 0)
-	return rows
+	return customers.with_lines(rows)
 
 
 @frappe.whitelist()
@@ -275,15 +307,25 @@ def search_customers(q: str = "") -> list[dict]:
 	q = search_text(q)
 	if len(q) < 2:
 		return []
-	like = f"%{q}%"
-	return frappe.get_all(
-		"Customer",
-		filters={"disabled": 0},
-		or_filters={"name": ["like", like], "customer_name": ["like", like], "mobile_no": ["like", like]},
-		fields=["name", "customer_name", "mobile_no", "territory"],
-		order_by="customer_name asc",
-		limit_page_length=SEARCH_LIMIT,
-	)
+	names = customers.search(q, SEARCH_LIMIT)
+	if not names:
+		return []
+	found = {
+		c.name: c
+		for c in frappe.get_all(
+			"Customer", filters={"name": ["in", names]}, fields=["name", "customer_name", "mobile_no", "territory"]
+		)
+	}
+	rows = [found[n] for n in names if n in found]
+	company = ms_settings.get_settings().company
+	balances = customers.outstanding_by_customer(names, company)
+	for row in rows:
+		row.customer = row.name
+		row.outstanding = flt(balances.get(row.name, 0), 2)
+	customers.with_lines(rows)
+	for row in rows:
+		row.pop("customer")
+	return rows
 
 
 @frappe.whitelist()
@@ -804,7 +846,7 @@ def _image_type(content: bytes) -> str | None:
 def get_visits(trip: str) -> list[dict]:
 	"""The trip's visits for the History screen."""
 	doc = own_trip(trip)
-	return frappe.get_all(
+	visits = frappe.get_all(
 		"Customer Visit",
 		filters={"mobile_trip": doc.name, "docstatus": ["<", 2]},
 		fields=[
@@ -827,6 +869,7 @@ def get_visits(trip: str) -> list[dict]:
 		],
 		order_by="visit_datetime desc",
 	)
+	return customers.with_lines(visits)
 
 
 # Trip status

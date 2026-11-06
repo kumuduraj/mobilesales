@@ -55,3 +55,9 @@ export function endSession() {
 				})
 		}, timing.expiredRedirect)
 }
+
+// A pending "session ended" redirect is dropped (a test that checks the message before the redirect).
+export function cancelEndSession() {
+	clearTimeout(redirecting)
+	redirecting = null
+}

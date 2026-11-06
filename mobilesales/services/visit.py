@@ -199,7 +199,9 @@ def on_submit(visit):
 		needed = _needed_stock(visit)
 		_check_van_stock(trip.van_warehouse, needed, stock.lock_bin_qty(trip.van_warehouse, list(needed)))
 
-	customer_update.on_visit_submit(visit, bool(settings.apply_customer_updates_directly))
+	customer_update.on_visit_submit(
+		visit, bool(settings.apply_customer_updates_directly), bool(settings.allow_direct_name_change)
+	)
 
 	if visit.outcome == "Sale":
 		si = invoicing.build_invoice(visit, save=True)

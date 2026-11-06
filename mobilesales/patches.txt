@@ -7,3 +7,4 @@
 mobilesales.patches.v0_5.set_visit_off_route
 mobilesales.patches.v0_6.create_vehicles_from_agent_vans
 mobilesales.patches.v1_0.add_core_lookup_indexes
+mobilesales.patches.v1_0.renumber_route_sequence

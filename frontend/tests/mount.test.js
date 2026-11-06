@@ -2,10 +2,10 @@
 // route rendered once per scenario. Any app/router error, unhandled rejection or Vue warning fails the build.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createMemoryHistory } from "vue-router"
-import { nav, timing as accountTiming } from "../src/account"
+import { cancelEndSession, nav, timing as accountTiming } from "../src/account"
 import { createMobileApp, routes } from "../src/app"
 import { timing as connectionTiming } from "../src/connection"
-import { connection, LOGIN_URL, online, session, unsaved, visitPrints } from "../src/state"
+import { connection, customerLine, LOGIN_URL, online, session, unsaved, visitPrints } from "../src/state"
 
 const AGENT = {
 	name: "MSA-0001",
@@ -1107,7 +1107,11 @@ describe("session ended (v1.0.1)", () => {
 		go = vi.spyOn(nav, "go").mockImplementation(() => {})
 		accountTiming.expiredRedirect = 20
 	})
-	afterEach(() => (accountTiming.expiredRedirect = 2500))
+	afterEach(() => {
+		cancelEndSession() // a redirect still pending would clear the session in a later test
+		session.expired = false
+		accountTiming.expiredRedirect = 2500
+	})
 
 	it("a call refused because the login ended: a plain message, then the login page", async () => {
 		server = (url) => {
@@ -1221,5 +1225,248 @@ describe("online / offline status (v1.0.1)", () => {
 		expect(seen.reconnecting).toBe("reconnecting")
 		expect(seen.back).toEqual(["online", "Online", "Back online"])
 		expect(seen.reloaded).toBeGreaterThan(0)
+	})
+})
+
+// ---- v1.0.2: customer identification, route order and NEXT, cart, credit, name change ---------------------
+
+async function withApi(overrides, fn) {
+	const saved = Object.fromEntries(Object.keys(overrides).map((k) => [k, API[k]]))
+	Object.assign(API, structuredClone(overrides))
+	try {
+		return await fn()
+	} finally {
+		Object.assign(API, saved)
+	}
+}
+const IDENT = { address_line1: "No 1, Main Road", city: "JA-ELA", mobile_no: "0700 000 002" }
+const routeRow = (sequence, customer, extra = {}) => ({
+	customer, customer_name: customer, sequence, visit_frequency: "Daily", visit_day: "", due: true, visited: false,
+	outcome: null, outstanding: 0, address_line1: null, city: null, mobile_no: null, ...extra,
+})  // fmt: skip
+const rowsText = (root, selector) => [...root.querySelectorAll(selector)].map((el) => el.textContent.replace(/\s+/g, " ").trim())
+
+describe("customer identification (v1.0.2)", () => {
+	it("shows '<address line 1>, <city> · …<last 4 of mobile>' and skips missing parts", () => {
+		expect(customerLine(IDENT)).toBe("No 1, Main Road, JA-ELA · …0002")
+		expect(customerLine({ city: "JA-ELA" })).toBe("JA-ELA")
+		expect(customerLine({ mobile_no: "+94 77 123 4567" })).toBe("…4567")
+		expect(customerLine({ address: { address_line1: "1 Main Street", city: "Colombo" }, mobile_no: null })).toBe("1 Main Street, Colombo")
+		expect(customerLine({})).toBe("")
+	})
+
+	it("Route list and search results carry the line under the name; search asks the server for address and mobile too", async () => {
+		const seen = {}
+		await withApi(
+			{ get_route_plan: [routeRow(1, "Pilot Customer 1", IDENT), routeRow(2, "test1")], search_customers: [{ name: "Shop A", customer_name: "Shop A", outstanding: 0, ...IDENT }] },
+			() =>
+				render(boot(AGENT, trip("In Field")), "/route", async (root) => {
+					seen.rows = rowsText(root, ".route-row .customer-line")
+					const input = root.querySelector("input[type=search]")
+					input.value = "JA-ELA"
+					input.dispatchEvent(new Event("input"))
+					await new Promise((resolve) => setTimeout(resolve, 400))
+					await settle()
+					seen.results = rowsText(root, ".search-result .customer-line")
+					seen.placeholder = input.getAttribute("placeholder")
+				})
+		)
+		expect(problems).toEqual([])
+		expect(seen.rows).toEqual(["No 1, Main Road, JA-ELA · …0002"]) // test1 has none: no empty line
+		expect(seen.results).toEqual(["No 1, Main Road, JA-ELA · …0002"])
+		expect(seen.placeholder).toContain("address")
+		const [[, init]] = calls("search_customers")
+		expect(init.body.get("q")).toBe("JA-ELA")
+	})
+
+	it("visit header, previous-outstanding and return pickers, and History show the line", async () => {
+		const seen = {}
+		await withApi({ get_customer: { ...API.get_customer, ...IDENT }, get_visits: API.get_visits.map((v) => ({ ...v, ...IDENT })) }, async () => {
+			await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				seen.header = root.querySelector(".customer-line")?.textContent.trim()
+				for (let i = 0; i < 3; i++) {
+					buttonStarting(root, "Next").click()
+					await settle()
+				}
+				buttonStarting(root, "Return Only").click()
+				await settle()
+				buttonStarting(root, "Next").click()
+				await settle()
+				seen.returns = [...root.querySelectorAll(".customer-line")].pop()?.textContent.trim()
+			})
+			seen.history = await render(boot(AGENT, trip("In Field")), "/history", async (root) => {
+				seen.historyLines = rowsText(root, ".customer-line")
+			})
+		})
+		expect(problems).toEqual([])
+		expect(seen.header).toBe("No 1, Main Road, JA-ELA · …0002")
+		expect(seen.returns).toBe("Pilot Customer 1 · No 1, Main Road, JA-ELA · …0002")
+		expect(seen.historyLines.length).toBe(API.get_visits.length)
+		expect(new Set(seen.historyLines)).toEqual(new Set(["No 1, Main Road, JA-ELA · …0002"]))
+	})
+})
+
+describe("route order and NEXT (v1.0.2)", () => {
+	const routeState = (root) => ({
+		numbers: rowsText(root, ".route-number"),
+		next: root.querySelector(".route-next")?.dataset.customer || null,
+		badges: root.querySelectorAll(".next-badge").length,
+		start: !!root.querySelector(".route-next .start-visit"),
+		visited: rowsText(root, ".route-row .visited"),
+	})
+	const routeOf = (rows) => withApi({ get_route_plan: rows }, () => render(boot(AGENT, trip("In Field")), "/route", async (root) => (seenRoute = routeState(root))))
+	let seenRoute
+
+	it("numbers the customers in route order; NEXT is the first not visited, with Start visit", async () => {
+		await routeOf([routeRow(1, "A"), routeRow(2, "B"), routeRow(3, "C")])
+		expect(problems).toEqual([])
+		expect(seenRoute).toEqual({ numbers: ["1.", "2.", "3."], next: "A", badges: 1, start: true, visited: [] })
+	})
+
+	it("after a visit NEXT moves on; visited ones show ✓ and the outcome", async () => {
+		await routeOf([routeRow(1, "A", { visited: true, outcome: "Sale" }), routeRow(2, "B"), routeRow(3, "C")])
+		expect(seenRoute.next).toBe("B")
+		expect(seenRoute.visited).toEqual(["✓ Sale"])
+	})
+
+	it("out of order: the agent visited C first — NEXT stays on the first not visited (A), nothing is blocked", async () => {
+		await routeOf([routeRow(1, "A"), routeRow(2, "B"), routeRow(3, "C", { visited: true, outcome: "No Sale" })])
+		expect(seenRoute.next).toBe("A")
+		expect(seenRoute.visited).toEqual(["✓ No Sale"])
+	})
+
+	it("skips customers not due today; when all are visited there is no NEXT", async () => {
+		await routeOf([routeRow(1, "A", { due: false }), routeRow(2, "B")])
+		expect(seenRoute.next).toBe("B")
+		await routeOf([routeRow(1, "A", { visited: true, outcome: "Sale" }), routeRow(2, "B", { visited: true, outcome: "Shop Closed" })])
+		expect(seenRoute).toMatchObject({ next: null, badges: 0, start: false })
+	})
+})
+
+describe("credit display and name change on the card (v1.0.2)", () => {
+	it("a negative balance is 'Credit: LKR x' in green on the Route list, search results and the card", async () => {
+		const seen = {}
+		await withApi(
+			{
+				get_route_plan: [routeRow(1, "Pilot Customer 1", { outstanding: -649 }), routeRow(2, "test1", { outstanding: 1325 })],
+				search_customers: [{ name: "Pilot Customer 1", customer_name: "Pilot Customer 1", outstanding: -649 }],
+				get_customer: { ...API.get_customer, outstanding: 0, balance: -649, pending_name: "Pilot Shop (New)" },
+			},
+			async () => {
+				await render(boot(AGENT, trip("In Field")), "/route", async (root) => {
+					seen.route = [...root.querySelectorAll(".route-row .balance")].map((el) => [el.textContent.replace(/\s+/g, " ").trim(), el.classList.contains("text-green-700")])
+					const input = root.querySelector("input[type=search]")
+					input.value = "Pilot"
+					input.dispatchEvent(new Event("input"))
+					await new Promise((resolve) => setTimeout(resolve, 400))
+					await settle()
+					seen.search = root.querySelector(".search-result .balance")?.textContent.replace(/\s+/g, " ").trim()
+				})
+				await render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+					seen.pending = root.querySelector(".pending-name")?.textContent.trim()
+					buttonStarting(root, "Next").click()
+					await settle()
+					const value = root.querySelector(".card-balance")
+					seen.card = [value.previousElementSibling.textContent.trim(), value.textContent.trim(), value.classList.contains("text-green-700")]
+				})
+			}
+		)
+		expect(problems).toEqual([])
+		expect(seen.route).toEqual([["Credit: LKR 649.00", true], ["Outstanding: LKR 1,325.00", false]])
+		expect(seen.search).toBe("Credit: LKR 649.00")
+		expect(seen.card).toEqual(["Credit", "LKR 649.00", true])
+		expect(seen.pending).toBe("Name change pending: Pilot Shop (New)")
+	})
+})
+
+describe("cart with many items (v1.0.2)", () => {
+	const VAN = [
+		{ item_code: "ARCP003", item_name: "Kochchi Chicken Meat", stock_uom: "Kg", actual_qty: 10, price_list_rate: 1325, image: "/files/chicken.jpg", has_batch_no: 1, batches: [] },
+		{ item_code: "EGG01", item_name: "Farm Eggs", stock_uom: "Nos", actual_qty: 60, price_list_rate: 45, image: null, has_batch_no: 0, batches: [] },
+		{ item_code: "SAU02", item_name: "Chicken Sausage", stock_uom: "Pack", actual_qty: 12, price_list_rate: 890, image: null, has_batch_no: 0, batches: [] },
+	]
+	const cartState = (root) => ({
+		rows: [...root.querySelectorAll(".cart-row")].map((r) => r.dataset.item),
+		chips: rowsText(root, ".cart-chip"),
+		empty: root.querySelector(".cart-empty")?.textContent.trim() || null,
+	})
+	const toCart = async (root) => {
+		for (let i = 0; i < 3; i++) {
+			buttonStarting(root, "Next").click()
+			await settle()
+		}
+		buttonStarting(root, "Sale").click()
+		await settle()
+	}
+	const plus = async (root, item) => {
+		buttonStarting(root.querySelector(`.cart-row[data-item="${item}"]`), "+").click()
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		await settle()
+	}
+
+	it("each row: code, qty in van, price, thumbnail; qty > 0 rows go to the top with their line total", async () => {
+		const seen = {}
+		const priced = { ...API.price_cart, returns: [], return_total: 0, credit_applied: 0, credit_on_previous: {},
+			lines: [{ item_code: "SAU02", qty: 1, rate: 890, amount: 890, enough_stock: true }], rounded_total: 890, due_on_sale: 890 }  // fmt: skip
+		await withApi({ get_van_stock: VAN, price_cart: priced }, () =>
+			render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				await toCart(root)
+				seen.before = cartState(root)
+				const first = root.querySelector('.cart-row[data-item="ARCP003"]')
+				seen.firstText = first.textContent.replace(/\s+/g, " ")
+				seen.thumb = first.querySelector(".cart-thumb")?.getAttribute("src")
+				seen.noThumb = root.querySelector('.cart-row[data-item="EGG01"] .cart-thumb')
+				await plus(root, "SAU02")
+				seen.after = cartState(root)
+				seen.total = root.querySelector('.cart-row[data-item="SAU02"] .cart-line-total')?.textContent.replace(/\s+/g, " ").trim()
+			})
+		)
+		expect(problems).toEqual([])
+		expect(seen.before).toEqual({ rows: ["ARCP003", "EGG01", "SAU02"], chips: ["In cart (0)", "All van items (3)"], empty: null })
+		expect(seen.firstText).toContain("ARCP003 · In van: 10 Kg · LKR 1,325.00 / Kg")
+		expect(seen.thumb).toBe("/files/chicken.jpg")
+		expect(seen.noThumb).toBeNull()
+		expect(seen.after.rows).toEqual(["SAU02", "ARCP003", "EGG01"]) // in cart first, the rest keep the van order
+		expect(seen.after.chips).toEqual(["In cart (1)", "All van items (3)"])
+		expect(seen.total).toBe("1 × LKR 890.00 = LKR 890.00")
+	})
+
+	it("search by name or code and the 'In cart' / 'All van items' chips", async () => {
+		const seen = {}
+		await withApi({ get_van_stock: VAN }, () =>
+			render(boot(AGENT, trip("In Field")), "/visit/Pilot%20Customer%201", async (root) => {
+				await toCart(root)
+				const search = root.querySelector(".cart-search")
+				const type = async (text) => {
+					search.value = text
+					search.dispatchEvent(new Event("input"))
+					await settle()
+				}
+				await type("chicken")
+				seen.byName = cartState(root).rows
+				await type("egg01")
+				seen.byCode = cartState(root).rows
+				await type("zzz")
+				seen.none = cartState(root).empty
+				await type("")
+				buttonStarting(root, "In cart").click()
+				await settle()
+				seen.emptyCart = cartState(root)
+				buttonStarting(root, "All van items").click()
+				await settle()
+				await plus(root, "EGG01")
+				buttonStarting(root, "In cart").click()
+				await settle()
+				seen.inCart = cartState(root).rows
+				seen.pressed = [...root.querySelectorAll(".cart-chip")].map((b) => b.getAttribute("aria-pressed"))
+			})
+		)
+		expect(problems).toEqual([])
+		expect(seen.byName).toEqual(["ARCP003", "SAU02"])
+		expect(seen.byCode).toEqual(["EGG01"])
+		expect(seen.none).toBe("No van item matches.")
+		expect(seen.emptyCart).toMatchObject({ rows: [], empty: "Nothing in the cart yet." })
+		expect(seen.inCart).toEqual(["EGG01"])
+		expect(seen.pressed).toEqual(["true", "false"])
 	})
 })

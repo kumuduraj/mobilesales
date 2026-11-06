@@ -25,6 +25,119 @@ def outstanding_by_customer(customer_names, company) -> dict:
 	}
 
 
+def customer_lines(customer_names) -> dict:
+	"""{customer: {address_line1, city, mobile_no}}: what tells two shops of the same name apart on the phone
+	and in Desk link search. The primary address (else the first linked one) and the customer's mobile (else its
+	primary contact's)."""
+	names = list(dict.fromkeys(n for n in customer_names if n))
+	if not names:
+		return {}
+	out = {
+		row.name: frappe._dict(address_line1=None, city=None, mobile_no=row.mobile_no, _primary=row.customer_primary_address)
+		for row in frappe.db.sql(
+			"select name, mobile_no, customer_primary_address from `tabCustomer` where name in %s", (tuple(names),), as_dict=True
+		)
+	}
+	for row in frappe.db.sql(
+		"""select dl.link_name as customer, a.name, a.address_line1, a.city from `tabDynamic Link` dl
+		join `tabAddress` a on a.name = dl.parent
+		where dl.parenttype = 'Address' and dl.link_doctype = 'Customer' and dl.link_name in %s and a.disabled = 0
+		order by a.is_primary_address desc, a.creation asc""",
+		(tuple(names),),
+		as_dict=True,
+	):
+		line = out.get(row.customer)
+		if line is not None and (line.address_line1 is None or row.name == line._primary):
+			line.address_line1, line.city = row.address_line1, row.city
+			if row.name == line._primary:
+				line._primary = "chosen"
+	missing_mobile = [n for n, line in out.items() if not line.mobile_no]
+	if missing_mobile:
+		for row in frappe.db.sql(
+			"""select dl.link_name as customer, c.mobile_no from `tabDynamic Link` dl join `tabContact` c on c.name = dl.parent
+			where dl.parenttype = 'Contact' and dl.link_doctype = 'Customer' and dl.link_name in %s
+				and ifnull(c.mobile_no, '') != ''
+			order by c.is_primary_contact desc, c.creation asc""",
+			(tuple(missing_mobile),),
+			as_dict=True,
+		):
+			if not out[row.customer].mobile_no:
+				out[row.customer].mobile_no = row.mobile_no
+	for line in out.values():
+		line.pop("_primary", None)
+	return out
+
+
+def identification(line) -> str:
+	"""'No 1, Main Road, JA-ELA · …0002' (missing parts skipped); the phone formats the same fields alike."""
+	place = ", ".join(p for p in ((line or {}).get("address_line1"), (line or {}).get("city")) if p)
+	digits = re.sub(r"\D", "", (line or {}).get("mobile_no") or "")
+	return " · ".join(p for p in (place, f"…{digits[-4:]}" if digits else "") if p)
+
+
+def with_lines(rows, key="customer"):
+	"""Add address_line1, city and mobile_no of each row's customer (rows: dicts with `key`)."""
+	lines = customer_lines([r[key] for r in rows])
+	for row in rows:
+		line = lines.get(row[key]) or {}
+		for field in ("address_line1", "city", "mobile_no"):
+			row[field] = line.get(field)
+	return rows
+
+
+def search(text, limit) -> list[str]:
+	"""Customers (enabled) whose name, mobile, or a linked address's line 1 or city contains the text."""
+	like = f"%{text}%"
+	digits = normalise_mobile(text)
+	return [
+		row[0]
+		for row in frappe.db.sql(
+			"""select distinct c.name, c.customer_name from `tabCustomer` c
+			left join `tabDynamic Link` dl on dl.link_doctype = 'Customer' and dl.link_name = c.name
+				and dl.parenttype in ('Address', 'Contact')
+			left join `tabAddress` a on dl.parenttype = 'Address' and a.name = dl.parent
+			left join `tabContact` ct on dl.parenttype = 'Contact' and ct.name = dl.parent
+			where c.disabled = 0 and (c.name like %(like)s or c.customer_name like %(like)s or c.mobile_no like %(like)s
+				or a.address_line1 like %(like)s or a.city like %(like)s
+				or (%(digits)s != '' and (replace(replace(c.mobile_no, ' ', ''), '-', '') like %(dlike)s
+					or replace(replace(ct.mobile_no, ' ', ''), '-', '') like %(dlike)s)))
+			order by c.customer_name asc, c.name asc
+			limit %(limit)s""",
+			{"like": like, "digits": digits if len(digits) >= 3 else "", "dlike": f"%{digits}%", "limit": limit},
+		)
+	]
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def customer_query(doctype, txt, searchfield, start, page_len, filters):
+	"""Desk link search for Customer on Customer Visit and Mobile Route: name, customer name and the line that
+	tells same-named shops apart. Matches name, mobile, address line 1 and city like the phone."""
+	if not frappe.has_permission("Customer", "read"):
+		return []
+	start, page_len = int(start or 0), int(page_len or 20)
+	if txt:
+		names = search(txt, start + page_len)[start:]
+	else:
+		names = frappe.get_all("Customer", filters={"disabled": 0}, pluck="name", order_by="customer_name asc",
+			limit_start=start, limit_page_length=page_len)  # fmt: skip
+	titles = dict(frappe.get_all("Customer", filters={"name": ["in", names or [""]]}, fields=["name", "customer_name"], as_list=True))
+	lines = customer_lines(names)
+	return [(name, titles.get(name) or name, identification(lines.get(name))) for name in names]
+
+
+def pending_name_change(customer) -> str | None:
+	"""The newest customer name still waiting for a supervisor (Customer Visit Change rows)."""
+	rows = frappe.db.sql(
+		"""select ch.new_value from `tabCustomer Visit Change` ch join `tabCustomer Visit` v on v.name = ch.parent
+		where v.customer = %s and v.docstatus = 1 and ch.parenttype = 'Customer Visit'
+			and ch.field_key = 'customer.customer_name' and ch.status = 'Pending Approval'
+		order by v.visit_datetime desc, v.creation desc limit 1""",
+		customer,
+	)
+	return rows[0][0] if rows else None
+
+
 def outstanding_invoices(customer, company) -> list[dict]:
 	"""Same rule as the Previous Outstanding picker: submitted, outstanding, this customer and company."""
 	return frappe.get_all(
@@ -78,6 +191,12 @@ def customer_card(customer, company) -> dict:
 	invoices = outstanding_invoices(customer, company)
 	card["outstanding_invoices"] = invoices
 	card["outstanding"] = sum(flt(i.outstanding_amount) for i in invoices)
+	# net of every submitted invoice and credit note: below 0 the phone shows "Credit" (v1.0.2)
+	card["balance"] = flt(outstanding_by_customer([customer], company).get(customer, 0), 2)
+	card["pending_name"] = pending_name_change(customer)
+	card.update(with_lines([{"customer": customer}])[0])
+	card.pop("customer", None)
+	card["mobile_no"] = card["mobile_no"] or doc.mobile_no
 	card["shelf_stock"] = last_shelf_stock(customer)
 	return card
 

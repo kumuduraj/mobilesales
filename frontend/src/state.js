@@ -33,6 +33,22 @@ export function money(value) {
 	return `${currency} ${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim()
 }
 
+// "<address line 1>, <city> · …<last 4 digits of mobile>", missing parts skipped: what tells two shops of the
+// same name apart (v1.0.2). Same rule as services/customers.identification on the server.
+export function customerLine(c) {
+	if (!c) return ""
+	const place = [c.address_line1 ?? c.address?.address_line1, c.city ?? c.address?.city].filter(Boolean).join(", ")
+	const digits = String(c.mobile_no || "").replace(/\D/g, "")
+	return [place, digits ? `…${digits.slice(-4)}` : ""].filter(Boolean).join(" · ")
+}
+
+// A customer balance: below 0 the customer holds credit, shown as "Credit: LKR x" (green), never as a
+// negative outstanding.
+export function balance(value) {
+	const n = Number(value || 0)
+	return n < 0 ? { credit: true, label: __("Credit"), text: money(-n) } : { credit: false, label: __("Outstanding"), text: money(n) }
+}
+
 export function qty(value) {
 	return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 3 })
 }

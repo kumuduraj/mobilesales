@@ -92,5 +92,17 @@ COLUMNS = [
   "label": "Status",
   "fieldtype": "Data",
   "width": 120
+ },
+ {
+  "fieldname": "out_of_sequence",
+  "label": "Visited out of sequence",
+  "fieldtype": "Check",
+  "width": 110
+ },
+ {
+  "fieldname": "trip_out_of_sequence",
+  "label": "Out-of-sequence visits (trip)",
+  "fieldtype": "Int",
+  "width": 120
  }
 ]

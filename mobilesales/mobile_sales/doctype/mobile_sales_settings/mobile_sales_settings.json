@@ -37,6 +37,7 @@
   "allow_credit_sales",
   "column_break_rules",
   "apply_customer_updates_directly",
+  "allow_direct_name_change",
   "require_geolocation",
   "reports_section",
   "daily_report_email"
@@ -241,6 +242,13 @@
    "default": "0"
   },
   {
+   "fieldname": "allow_direct_name_change",
+   "fieldtype": "Check",
+   "label": "Allow Direct Name Change",
+   "default": "0",
+   "description": "Off (default): a new customer name entered on the phone always waits for supervisor approval, even when customer updates are applied directly."
+  },
+  {
    "fieldname": "require_geolocation",
    "fieldtype": "Check",
    "label": "Require Geolocation",
@@ -262,7 +270,7 @@
  "index_web_pages_for_search": 0,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-03 09:00:00.000000",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mobile Sales",
  "name": "Mobile Sales Settings",

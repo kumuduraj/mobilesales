@@ -327,7 +327,7 @@ class TestMobileAPI(MobileSalesTestCase):
 		customer = frappe.get_doc("Customer", created["name"])
 		self.assertEqual((customer.customer_group, customer.territory, created["route"]), (group, territory, route))
 		rows = [(r.customer, r.sequence) for r in frappe.get_doc("Mobile Route", route).customers]
-		self.assertEqual(rows, [(self.customer, 7), (created["name"], 8)])
+		self.assertEqual(rows, [(self.customer, 1), (created["name"], 2)])  # added at the end; v1.0.2 numbers routes 1, 2, 3…
 		self.assertFalse(frappe.db.exists("Custom DocPerm", {"parent": "Mobile Route"}))
 
 	# settlement

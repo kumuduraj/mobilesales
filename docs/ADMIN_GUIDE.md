@@ -98,7 +98,7 @@ Do these once, in order. Each line names the screen.
    trip date. A visit refuses an item without a price; it never sells at 0.
 7. **Mobile Vehicle** for each van, then **Create Van Warehouse** on it.
 8. **Users and agents** (§5).
-9. **Mobile Route** for each route, with its customers in visiting order.
+9. **Mobile Route** for each route, with its customers in visiting order (see *Route order* below).
 10. **Outgoing email and a real supervisor user**, for the 20:00 Day Report email (§7). Until both exist, the
     email is skipped every evening (one log line, nothing queued).
 11. A first **mini live run**: one trip, two visits, settle it (§6).
@@ -175,6 +175,44 @@ Mobile Trip → Submit → Start Trip → visits → End Day →  Verify Stock �
 Customer updates (name, phone, address) entered on the phone wait in the visit as *Pending Approval*, unless
 "apply directly" is on. The supervisor opens the visit and uses **Approve Customer Update** /
 **Reject Customer Update**.
+
+**Name changes always need approval.** A new customer name waits for the supervisor even when *Apply Customer
+Updates Directly* is on (the name is what invoices and reports carry); the other fields (mobile, email, address,
+contact) still follow that setting. The phone shows *"Name change pending: <new name>"* on the customer until it
+is approved or rejected. To let names change directly too, tick **Allow Direct Name Change** in Mobile Sales
+Settings (off by default).
+
+### Vehicle → van warehouse → trip load
+
+Each van is one **Mobile Vehicle**, and each vehicle has its own stock location, the **van warehouse**:
+
+1. Mobile Vehicle `VAN-01` → **Create Van Warehouse** makes `VAN-01 Van - ARL` under the van group
+   (`Mobile Vans - ARL`). Nothing else may post stock into it: SLMFC, deliveryplan and office documents are refused
+   there.
+2. The agent's **Default Vehicle** (`VAN-01`) fills the trip's vehicle, and the trip takes that vehicle's van
+   warehouse.
+3. **Load:** the trip's Submit moves the load items from the **Source Warehouse** (Settings, e.g.
+   `Finished Goods - ARL`) into `VAN-01 Van - ARL`, one Stock Entry tagged with the trip. Top-ups do the same during
+   the day.
+4. Visits sell from `VAN-01 Van - ARL`; the settlement returns what is left to the store (and damaged / missing
+   stock to their accounts), so the van is empty again before the next trip can be loaded.
+
+**Choosing a batch when loading** (optional). A load or top-up row of a batch item has a **Batch** field. Empty, the
+oldest batches are taken (FIFO), as before. To send a particular batch, pick it: the list shows only that item's
+enabled, unexpired batches with stock in the source warehouse, oldest first, as *"<batch> · 12 Kg available · exp
+<date> · mfg <date>"*. The same item may be on several rows with different batches. Each batch's rows together
+may not need more than that batch holds (*"Batch … : 5 Kg available …, the rows choosing it need 6"*), and an
+expired batch is refused. *Available at source* shows the batch's quantity when a batch is chosen. Rows without a
+batch of the same item take the oldest of what the chosen rows leave. Sales from the van stay FIFO among the van's
+batches; the settlement returns oldest first, as before.
+
+### Route order
+
+A route has **one order**, the same in Desk, on the phone and in the reports: by **Sequence**, numbered 1, 2, 3…
+on every save (equal numbers keep their row order; rows without a number go to the end). To reorder, either type
+the new numbers and save, or drag rows in the table (the drag renumbers them) and save. New customers created on
+the phone go to the end of the route they were added to. Agents may visit in any order; **Route Coverage** marks
+the visits made out of sequence and counts them per trip.
 
 ## 7. Reports, workspace, Day Report email
 

@@ -981,8 +981,10 @@ def coverage_rows(filters=None) -> list:
 		by_customer = {}
 		for v in visits:
 			by_customer.setdefault(v.customer, v)
+		plan = route_customers(trip.route)
+		out_of_sequence = visited_out_of_sequence(plan, visits)
 		on_route = set()
-		for r in route_customers(trip.route):
+		for r in plan:
 			on_route.add(r.customer)
 			planned = planned_on(r, trip.trip_date)
 			v = by_customer.get(r.customer)
@@ -994,6 +996,8 @@ def coverage_rows(filters=None) -> list:
 					route=trip.route, sequence=r.sequence, customer=r.customer, customer_name=r.customer_name,
 					planned=cint(planned), visited=cint(bool(v)), outcome=v.outcome if v else None,
 					status=_("Visited") if planned and v else _("Missed") if planned else _("Visited (not due)"),
+					out_of_sequence=cint(r.customer in out_of_sequence),
+					trip_out_of_sequence=len(out_of_sequence),
 				)  # fmt: skip
 			)
 		for customer, v in by_customer.items():
@@ -1006,6 +1010,21 @@ def coverage_rows(filters=None) -> list:
 					)  # fmt: skip
 				)
 	return rows
+
+
+def visited_out_of_sequence(plan, visits) -> set:
+	"""Route customers first visited after a customer further down the route was already visited (the agent
+	may visit in any order; this only reports it)."""
+	sequence = {r.customer: cint(r.sequence) for r in plan}
+	furthest, out, seen = 0, set(), set()
+	for v in visits:  # visit time order
+		if v.customer in seen or v.customer not in sequence:
+			continue
+		seen.add(v.customer)
+		if sequence[v.customer] < furthest:
+			out.add(v.customer)
+		furthest = max(furthest, sequence[v.customer])
+	return out
 
 
 def no_sale_rows(filters=None, group_by="agent") -> list:
